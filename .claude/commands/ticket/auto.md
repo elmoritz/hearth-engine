@@ -1,6 +1,6 @@
 ---
 description: Autonomously implement, prove, review and land every ticket of one milestone, one after another. Blocked tickets are parked and the loop carries on. Resumable; can run unattended overnight. Ends with the milestone audit, follow-up filing and the retrospective.
-argument-hint: <milestone, e.g. v0.1> [--max-rounds N] [--max-tickets N] [--unattended] [--until HH:MM]
+argument-hint: <milestone, e.g. engine-01> [--max-rounds N] [--max-tickets N] [--unattended] [--until HH:MM]
 ---
 
 # /ticket:auto
@@ -143,7 +143,7 @@ Infra events: <count, or "none">
 
 ```sh
 mkdir -p .build/auto-loop
-claude -p "/ticket:auto v0.1 --unattended --until 07:00" --permission-mode bypassPermissions \
+claude -p "/ticket:auto engine-01 --unattended --until 07:00" --permission-mode bypassPermissions \
   2>&1 | tee -a .build/auto-loop/session.log
 ```
 
@@ -151,7 +151,7 @@ With `--max-tickets N`, repeat until the report no longer starts with `Session l
 
 ```sh
 while :; do
-  claude -p "/ticket:auto v0.1 --unattended --max-tickets 4 --until 07:00" --permission-mode bypassPermissions \
+  claude -p "/ticket:auto engine-01 --unattended --max-tickets 4 --until 07:00" --permission-mode bypassPermissions \
     2>&1 | tee .build/auto-loop/session.log
   grep -q '^Session limit reached' .build/auto-loop/session.log || break
 done

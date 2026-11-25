@@ -1,6 +1,6 @@
 ---
 description: Retrospective on one finished milestone - measure how it was built (tokens, time, review rounds, gate time, test strength, errors), find what to change in the commands, agents, scripts and docs, discuss each finding with the owner and apply the accepted ones right away.
-argument-hint: <milestone, e.g. v0.1> [--report-only] [--since ISO] [--until ISO]
+argument-hint: <milestone, e.g. engine-01> [--report-only] [--since ISO] [--until ISO]
 ---
 
 # /milestone:retro
