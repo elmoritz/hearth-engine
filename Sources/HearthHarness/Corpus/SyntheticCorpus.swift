@@ -92,8 +92,8 @@ public enum SyntheticCorpus {
 
     /// A grid of `cell`-sized squares in saturated colours; every square differs from its four neighbours.
     public static func saturatedNeighbours(cell: Int, columns: Int, rows: Int) throws(EngineError) -> PixelImage {
-        guard cell > 0, columns > 0, rows > 0 else {
-            throw .malformedAssetHeader(width: cell * columns, height: cell * rows, byteCount: 0)
+        guard sides.contains(cell), sides.contains(columns), sides.contains(rows) else {
+            throw .malformedAssetHeader(width: product(cell, columns), height: product(cell, rows), byteCount: 0)
         }
         var image = try PixelImage(width: cell * columns, height: cell * rows, filledWith: .black)
         for y in 0..<image.height {
@@ -123,8 +123,9 @@ public enum SyntheticCorpus {
     public static func numberedSheet(
         columns: Int, rows: Int, cellWidth: Int, cellHeight: Int
     ) throws(EngineError) -> PixelImage {
-        guard columns > 0, rows > 0, cellWidth > 0, cellHeight > 0 else {
-            throw .malformedAssetHeader(width: columns * cellWidth, height: rows * cellHeight, byteCount: 0)
+        guard sides.contains(columns), sides.contains(rows), sides.contains(cellWidth), sides.contains(cellHeight) else {
+            throw .malformedAssetHeader(
+                width: product(columns, cellWidth), height: product(rows, cellHeight), byteCount: 0)
         }
         var image = try PixelImage(width: columns * cellWidth, height: rows * cellHeight, filledWith: .black)
         for row in 0..<rows {
@@ -191,6 +192,17 @@ public enum SyntheticCorpus {
     }
 
     // MARK: Pieces
+
+    /// What one factor of an image's side may be. Factors are checked before they are multiplied, so no
+    /// argument can overflow; the product is then checked by `PixelImage`.
+    static let sides = 1...PixelImage.maximumDimension
+
+    /// `a * b` for an error's text: clamped to the nearest representable value where it overflows.
+    static func product(_ a: Int, _ b: Int) -> Int {
+        let (value, overflow) = a.multipliedReportingOverflow(by: b)
+        guard overflow else { return value }
+        return (a < 0) == (b < 0) ? Int.max : Int.min
+    }
 
     /// 0 at index 0, 255 at the last index, linear between; 255 for a single step.
     static func ramp(_ index: Int, _ count: Int) -> UInt8 {

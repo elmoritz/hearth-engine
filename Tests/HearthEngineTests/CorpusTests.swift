@@ -227,7 +227,7 @@ import Testing
         }
     }
 
-    @Test func `E-CORPUS-1 a generator refuses a size it cannot make`() {
+    @Test func `E-CORPUS-1 a generator refuses a size it cannot make`() throws {
         #expect(throws: EngineError.malformedAssetHeader(width: 0, height: 4, byteCount: 0)) { try SyntheticCorpus.flat(.red, width: 0, height: 4) }
         #expect(throws: EngineError.malformedAssetHeader(width: 4, height: 0, byteCount: 0)) { try SyntheticCorpus.alphaRamp(width: 4, height: 0) }
         #expect(throws: EngineError.malformedAssetHeader(width: -1, height: 4, byteCount: 0)) { try SyntheticCorpus.colourRamp(width: -1, height: 4) }
@@ -241,6 +241,36 @@ import Testing
                 try SyntheticCorpus.numberedSheet(columns: columns, rows: rows, cellWidth: width, cellHeight: height)
             }
         }
+        // Factors are refused before they are multiplied: the largest integers throw instead of overflowing, and
+        // the error reports the product clamped to what an Int holds.
+        #expect(throws: EngineError.malformedAssetHeader(width: Int.max, height: Int.max, byteCount: 0)) { try SyntheticCorpus.saturatedNeighbours(cell: Int.max, columns: 2, rows: 2) }
+        #expect(throws: EngineError.malformedAssetHeader(width: 2, height: Int.max, byteCount: 0)) { try SyntheticCorpus.saturatedNeighbours(cell: 1, columns: 2, rows: Int.max) }
+        #expect(throws: EngineError.malformedAssetHeader(width: Int.max, height: 4, byteCount: 0)) { try SyntheticCorpus.saturatedNeighbours(cell: 2, columns: Int.max, rows: 2) }
+        #expect(throws: EngineError.malformedAssetHeader(width: Int.max, height: Int.max, byteCount: 0)) {
+            try SyntheticCorpus.numberedSheet(columns: Int.max, rows: Int.max, cellWidth: Int.max, cellHeight: Int.max)
+        }
+        #expect(throws: EngineError.malformedAssetHeader(width: Int.min, height: 4, byteCount: 0)) {
+            try SyntheticCorpus.numberedSheet(columns: Int.min, rows: 1, cellWidth: 2, cellHeight: 4)
+        }
+        #expect(throws: EngineError.malformedAssetHeader(width: 4, height: Int.max, byteCount: 0)) {
+            try SyntheticCorpus.numberedSheet(columns: 1, rows: 3, cellWidth: 4, cellHeight: Int.max)
+        }
+        #expect(throws: EngineError.malformedAssetHeader(width: 4, height: Int.max, byteCount: 0)) {
+            try SyntheticCorpus.numberedSheet(columns: 1, rows: Int.max, cellWidth: 4, cellHeight: 3)
+        }
+        #expect(throws: EngineError.malformedAssetHeader(width: Int.max, height: 4, byteCount: 0)) {
+            try SyntheticCorpus.numberedSheet(columns: 1, rows: 1, cellWidth: Int.max, cellHeight: 4)
+        }
+        #expect(SyntheticCorpus.product(3, 4) == 12 && SyntheticCorpus.product(-3, 4) == -12)
+        #expect(SyntheticCorpus.product(Int.min, 2) == Int.min && SyntheticCorpus.product(2, Int.min) == Int.min)
+        #expect(SyntheticCorpus.product(Int.min, -2) == Int.max && SyntheticCorpus.product(Int.max, 2) == Int.max)
+        #expect(SyntheticCorpus.sides == 1...16384)
+        // Each factor may be the maximum on its own, as long as the side is not past it.
+        #expect(try SyntheticCorpus.saturatedNeighbours(cell: 1, columns: 16384, rows: 1).width == 16384)
+        #expect(try SyntheticCorpus.numberedSheet(columns: 1, rows: 16384, cellWidth: 1, cellHeight: 1).height == 16384)
+        #expect(try SyntheticCorpus.numberedSheet(columns: 16384, rows: 1, cellWidth: 1, cellHeight: 1).width == 16384)
+        #expect(try SyntheticCorpus.numberedSheet(columns: 1, rows: 1, cellWidth: 16384, cellHeight: 1).width == 16384)
+        #expect(try SyntheticCorpus.numberedSheet(columns: 1, rows: 1, cellWidth: 1, cellHeight: 16384).height == 16384)
         // Cells are square, so a cell past the maximum is too large on both sides.
         #expect(throws: EngineError.malformedAssetHeader(width: 16385, height: 16385, byteCount: 0)) { try SyntheticCorpus.saturatedNeighbours(cell: 16385, columns: 1, rows: 1) }
         #expect(throws: EngineError.malformedAssetHeader(width: 16385, height: 1, byteCount: 0)) { try SyntheticCorpus.numberedSheet(columns: 1, rows: 1, cellWidth: 16385, cellHeight: 1) }
