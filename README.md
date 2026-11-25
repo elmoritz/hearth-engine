@@ -3,7 +3,8 @@
 A small Swift + Metal 2D renderer for cozy, pre-rendered, soft-lit sprite games on iOS and iPadOS. Its first
 consumer is IdleVillage, an isometric idle builder whose art comes from a Blender-based asset kit.
 
-Status: **planning.** No code yet. The test catalogue is written first, so the engine is built against it.
+Status: **in development.** The test harness is in place (headless offscreen rendering, injected time, golden
+comparison, synthetic corpus); the renderer's subsystems follow, each built against the test catalogue.
 
 ## Goals, in order
 
