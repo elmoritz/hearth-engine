@@ -8,7 +8,8 @@
 
 fast (the implementer's loop, a minute or two):
   lint        scripts/lint.py
-  build       swift build --build-tests (the package sets Swift 6 and warnings as errors, E-API-1)
+  build       scripts/metal-toolchain (B-TOOL-1), then swift build --build-tests (the package sets
+              Swift 6 and warnings as errors, E-API-1)
   test        swift test --parallel, with coverage
   trace       catalogue ids against the results; with --ticket, every local id of the ticket must
               have passed with none skipped (the done-check; skipped is not passed, E-PROOF-2)
@@ -166,6 +167,11 @@ def step_selftest(r):
 
 def step_build(r):
     t = time.time()
+    # B-TOOL-1: the Metal Toolchain is checked first, so a missing component fails with its install command.
+    code, out = sh([sys.executable, "-I", os.path.join(ROOT, "scripts", "metal-toolchain")], r.log("build"), timeout=300)
+    if code != 0:
+        r.note("build", "FAIL", "no Metal Toolchain (B-TOOL-1)", [l.strip() for l in out.splitlines() if l.strip()])
+        return "infra"
     code, out = sh(["swift", "build", "--build-tests", "--enable-code-coverage"], r.log("build"), timeout=3600)
     if code == 127:
         r.note("build", "FAIL", "no swift toolchain")

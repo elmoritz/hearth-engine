@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""B-TOOL-1: is the Metal Toolchain installed where shaders are built?
+
+  scripts/metal-toolchain [--xcrun PATH]     exit 0 when `xcrun metal --version` runs, else 1 with the install command
+  scripts/metal-toolchain --self-test
+
+Since Xcode 26 the Metal compiler is a separate component. Without it a package with a `.metal` file fails
+deep inside the build; `scripts/gate` runs this first, so the failure names the fix.
+"""
+import subprocess
+import sys
+
+INSTALL = "xcodebuild -downloadComponent metalToolchain"
+
+
+def check(xcrun="xcrun"):
+    """-> (ok, message)."""
+    try:
+        r = subprocess.run([xcrun, "metal", "--version"], capture_output=True, text=True, timeout=120)
+        ok, why = r.returncode == 0, (r.stderr or r.stdout).strip().splitlines()[-1:] or ["exit %d" % r.returncode]
+    except (OSError, subprocess.TimeoutExpired) as x:
+        ok, why = False, [str(x)]
+    if ok:
+        return True, "metal-toolchain: installed"
+    return False, "metal-toolchain: the Metal Toolchain is missing (%s). Install it with:\n    %s" % (why[0], INSTALL)
+
+
+def self_test():
+    checks = [
+        ("a failing xcrun names the install command", check("/usr/bin/false")[0] is False and INSTALL in check("/usr/bin/false")[1]),
+        ("a missing xcrun names the install command", check("/nonexistent/xcrun")[0] is False and INSTALL in check("/nonexistent/xcrun")[1]),
+        ("a working xcrun passes", check("/usr/bin/true") == (True, "metal-toolchain: installed")),
+    ]
+    failed = [n for n, ok in checks if not ok]
+    for n in failed:
+        print("FAIL " + n)
+    print("metal-toolchain self-test: %d/%d" % (len(checks) - len(failed), len(checks)))
+    return 1 if failed else 0
+
+
+def main():
+    args = sys.argv[1:]
+    if "--self-test" in args:
+        sys.exit(self_test())
+    xcrun = args[args.index("--xcrun") + 1] if "--xcrun" in args and len(args) > args.index("--xcrun") + 1 else "xcrun"
+    ok, message = check(xcrun)
+    print(message)
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()

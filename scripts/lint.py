@@ -50,6 +50,8 @@ RULES = [
      "a consumer's name in the engine; the engine is game-agnostic"),
     ("deps", "E-API-1", r"^Package\.swift$", None, r"\.package\(",
      "a package dependency; the engine has none"),
+    ("manifest", "E-CORPUS-2", r"^(Sources|Tests)/.*\.swift$", None, r"\b(layers|tile|sheet)\.json\b",
+     "a kit manifest name; the engine never reads a kit manifest (D21)"),
 ]
 EMOJI = re.compile("[%s-%s%s-%s%s%s%s]" % tuple(chr(c) for c in (0x1F000, 0x1FAFF, 0x2600, 0x27BF, 0x2B50, 0x2B55, 0xFE0F)))
 EMOJI_PATHS = re.compile(r"\.(swift|metal|h|md|py|sh|json|yml|yaml|txt)$|^scripts/[^/.]+$|^Package\.swift$")
@@ -142,10 +144,15 @@ def self_test():
             ("struct GameStateAdapter {}", []),
             ("let s: GameState", ["agnostic"]),
             ("let ok = !done", []),
+            ("let url = dir.appendingPathComponent(\"layers.json\")", ["manifest"]),
+            ("let names = [\"tile.json\", \"scene.json\"]", ["manifest"]),
+            ("// sheet.json is the kit's business", []),
+            ("let scene = \"scene.json\"", []),
         ],
         "Sources/Engine/DisplayLinkAdapter.swift": [("let t = CACurrentMediaTime()", [])],
         "Tests/EngineTests/T.swift": [("try await Task.sleep(for: .seconds(1))", ["sleep"]),
-                                      ("let x = try! f()", [])],
+                                      ("let x = try! f()", []),
+                                      ("let s = load(\"sheet.json\")", ["manifest"])],
         "Package.swift": [(".package(url: \"x\", from: \"1.0.0\"),", ["deps"])],
         "docs/x.md": [("fine", []), ("party \U0001F389", ["emoji"])],
     }
