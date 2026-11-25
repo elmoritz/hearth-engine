@@ -4,7 +4,7 @@ import Metal
 
 /// The one place the harness asks for a Metal device, so "no device" is a value tests can inject (E-HAR-5).
 public enum HarnessGPU {
-    public enum Availability {
+    public enum Availability: Sendable {
         case available(MTLDevice)
         case unavailable(reason: String)
 
@@ -34,11 +34,14 @@ public enum HarnessGPU {
         return .available(device)
     }
 
-    /// Whether this process has a device. GPU tests are enabled by this and report skipped without one.
-    public static let isAvailable: Bool = probe().isAvailable
+    /// What this process found, probed once. GPU tests are enabled by this and report skipped without a device.
+    public static let current: Availability = probe()
+
+    /// Whether this process has a device.
+    public static var isAvailable: Bool { current.isAvailable }
 
     /// A renderer on the probed device. Throws `EngineError.noDevice` when there is none.
-    public static func makeRenderer(_ availability: Availability = probe()) throws(EngineError) -> OffscreenRenderer {
+    public static func makeRenderer(_ availability: Availability = current) throws(EngineError) -> OffscreenRenderer {
         try OffscreenRenderer(device: availability.device)
     }
 }

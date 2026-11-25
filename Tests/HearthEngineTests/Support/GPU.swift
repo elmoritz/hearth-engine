@@ -4,8 +4,11 @@ import Testing
 
 extension Trait where Self == ConditionTrait {
     /// A GPU test: without a Metal device it reports skipped, never passed and never failed (E-HAR-5).
-    static var requiresGPU: Self {
-        .enabled(if: HarnessGPU.isAvailable, "no Metal device: skipped, which is not passed (E-PROOF-2)")
+    static var requiresGPU: Self { requiresGPU(HarnessGPU.current) }
+
+    /// The trait for a given answer of the device probe, so the skip itself can be tested.
+    static func requiresGPU(_ availability: HarnessGPU.Availability) -> Self {
+        .enabled(if: availability.isAvailable, "no Metal device: skipped, which is not passed (E-PROOF-2)")
     }
 }
 

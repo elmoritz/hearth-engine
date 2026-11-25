@@ -14,6 +14,24 @@ import Testing
         #expect(try HarnessGPU.makeRenderer(availability).deviceName == device.name)
     }
 
+    @Test func `E-HAR-5 the GPU trait skips on a nil device and on HEARTH_NO_GPU and runs with a device`() async throws {
+        // The condition every GPU test carries, evaluated as the test runner evaluates it.
+        let noDevice = HarnessGPU.probe(environment: [:], provider: { nil })
+        #expect(try await !ConditionTrait.requiresGPU(noDevice).evaluate())
+        let hidden = HarnessGPU.probe(environment: ["HEARTH_NO_GPU": "1"], provider: { MTLCreateSystemDefaultDevice() })
+        #expect(try await !ConditionTrait.requiresGPU(hidden).evaluate())
+        // The trait the tests use is the one for what this process probed, whatever that is.
+        #expect(try await ConditionTrait.requiresGPU.evaluate() == HarnessGPU.current.isAvailable)
+        #expect(HarnessGPU.isAvailable == HarnessGPU.current.isAvailable)
+        #expect(HarnessGPU.current.isAvailable == HarnessGPU.probe().isAvailable)
+    }
+
+    @Test(.requiresGPU) func `E-HAR-5 the GPU trait runs with a device`() async throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        #expect(try await ConditionTrait.requiresGPU(.available(device)).evaluate())
+        #expect(try await ConditionTrait.requiresGPU(HarnessGPU.probe(environment: [:], provider: { device })).evaluate())
+    }
+
     @Test func `E-HAR-5 a nil device makes the GPU suite skip not fail`() {
         let availability = HarnessGPU.probe(environment: [:], provider: { nil })
         #expect(!availability.isAvailable)
