@@ -1,0 +1,635 @@
+#!/usr/bin/env python3
+"""The one way to build and test hearth-engine. Agents never call `swift test` or `xcodebuild` themselves.
+
+  scripts/gate [fast|full] [--ticket N] [--base REV]
+  scripts/gate --wait RUN_DIR                          finish watching a run whose caller went away
+  scripts/gate --covers RUN_DIR [REV] [--ticket N]     exit 0 when that run still proves REV (default HEAD)
+  scripts/gate --self-test
+
+fast (the implementer's loop, a minute or two):
+  lint        scripts/lint.py
+  build       swift build --build-tests (the package sets Swift 6 and warnings as errors, E-API-1)
+  test        swift test --parallel, with coverage
+  trace       catalogue ids against the results; with --ticket, every local id of the ticket must
+              have passed with none skipped (the done-check; skipped is not passed, E-PROOF-2)
+
+full (once per review round, started by the loop) adds:
+  selftest    every script's --self-test
+  validation  the suite again, serial, under MTL_DEBUG_LAYER=1 and MTL_SHADER_VALIDATION=1 (E-VAL-1)
+  repeat      the suite a third time; a test whose result differs between the three runs is flaky
+  tsan        the suite under Thread Sanitizer (GATE_TSAN=0 turns it off)
+  ios         xcodebuild build for generic iOS (B-HOST-1)
+  diffcov     changed lines under Sources/ that no test executed (needs --base; below GATE_DIFFCOV_MIN,
+              default 90, the step fails; `// cov:allow - why` exempts a line)
+  mutation    scripts/mutate.py over the changed lines (needs --base); survivors are evidence for the
+              reviewer, never a failure by themselves
+  perf        scripts/perf.py check: probes against docs/perf/baseline.json
+
+Before Package.swift exists only lint and selftest run and the rest report `skip`.
+
+The run itself is a process of its own: if the call that started it is cut off (a ten-minute tool
+limit), the run carries on and `--wait RUN_DIR` picks it up; never start a second one for the same head.
+
+Every run writes .build/gate/<stamp>/: meta.txt (head, tree, tier, base, ticket, gpu), one log per
+step, out.txt (what was printed), summary.json, exit.txt. The output is one line per step, the failing lines, and a last line
+`gate: exit <n> ...`. Read that; open a log only for a step that failed.
+
+Exit codes: 0 green; 1 the code's fault; 2 another gate holds this checkout (wait, retry); 3
+infrastructure (no toolchain, or a full run with no Metal device: nothing here can prove a GPU test).
+"""
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GATE = os.path.join(ROOT, ".build", "gate")
+DOCS_ONLY = re.compile(r"^(docs/(?!TestCatalogue\.md$|perf/)|\.claude/|[^/]+\.md$|\.gitignore$)")
+STEPS_FAST = ["lint", "build", "test", "trace"]
+STEPS_FULL = ["lint", "selftest", "build", "test", "trace", "validation", "repeat", "tsan", "ios",
+              "diffcov", "mutation", "perf"]
+
+
+def sh(cmd, log=None, env=None, timeout=None, cwd=ROOT):
+    e = dict(os.environ)
+    e.update(env or {})
+    try:
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=e, timeout=timeout)
+        code, out = r.returncode, r.stdout + r.stderr
+    except subprocess.TimeoutExpired as x:
+        code, out = 124, (x.stdout or "") + "\ngate: timed out after %ss\n" % timeout if isinstance(x.stdout, str) else "gate: timed out"
+    except FileNotFoundError:
+        code, out = 127, "gate: %s not found" % cmd[0]
+    if log:
+        with open(log, "a", encoding="utf-8") as f:
+            f.write("$ %s\n%s\n[exit %s]\n" % (" ".join(cmd), out, code))
+    return code, out
+
+
+def git(*args):
+    return sh(["git"] + list(args))[1].strip()
+
+
+def xunit(paths):
+    """{classname.name: passed|failed|skipped}, [(name, message)] failures."""
+    res, fails = {}, []
+    for path in paths:
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            continue
+        try:
+            root = ET.parse(path).getroot()
+        except ET.ParseError:
+            continue
+        for c in root.iter("testcase"):
+            name = "%s.%s" % (c.get("classname", ""), c.get("name", ""))
+            f = c.find("failure") if c.find("failure") is not None else c.find("error")
+            if f is not None:
+                res[name] = "failed"
+                fails.append((name, (f.get("message") or "").strip()[:240]))
+            elif c.find("skipped") is not None:
+                res.setdefault(name, "skipped")
+            else:
+                res.setdefault(name, "passed")
+    return res, fails
+
+
+def xunit_files(base):
+    return [base, base[:-4] + "-swift-testing.xml"]
+
+
+class Run:
+    def __init__(self, tier, ticket, base, run_dir):
+        self.tier, self.ticket, self.base = tier, ticket, base
+        self.dir = run_dir
+        os.makedirs(self.dir, exist_ok=True)
+        self.steps, self.failed, self.summary = [], False, {}
+        self.results = {}
+        self.has_package = os.path.isfile(os.path.join(ROOT, "Package.swift"))
+
+    def log(self, name):
+        return os.path.join(self.dir, name + ".log")
+
+    def note(self, name, status, detail="", lines=(), seconds=0):
+        self.steps.append({"step": name, "status": status, "detail": detail, "seconds": round(seconds)})
+        if status == "FAIL":
+            self.failed = True
+        print("%-10s %-4s %s%s" % (name, status, detail, "  (%ds)" % seconds if seconds >= 1 else ""))
+        for l in list(lines)[:12]:
+            print("    " + l[:300])
+        sys.stdout.flush()
+
+    def swift_test(self, name, extra=(), env=None, scratch=None):
+        x = os.path.join(self.dir, name + ".xml")
+        cmd = ["swift", "test", "--xunit-output", x] + list(extra)
+        if scratch:
+            cmd += ["--scratch-path", scratch]
+        code, out = sh(cmd, self.log(name), env=env, timeout=5400)
+        res, fails = xunit(xunit_files(x))
+        return code, out, res, fails
+
+
+def error_lines(out, limit=10):
+    seen, lines = set(), []
+    for l in out.splitlines():
+        if re.search(r"\berror\b[:\s]|warning: .*will be an error|Fatal error", l) and l not in seen:
+            seen.add(l)
+            lines.append(l.strip())
+    return lines[:limit] or [l.strip() for l in out.splitlines()[-6:] if l.strip()]
+
+
+def step_lint(r):
+    code, out = sh([sys.executable, "-I", os.path.join(ROOT, "scripts", "lint.py")], r.log("lint"))
+    hits = [l for l in out.splitlines() if re.match(r"\S+:\d+: \[", l)]
+    r.note("lint", "ok" if code == 0 else "FAIL", "%d hit(s)" % len(hits), hits)
+
+
+def step_selftest(r):
+    bad, n = [], 0
+    for path in sorted(glob.glob(os.path.join(ROOT, "scripts", "**", "*"), recursive=True)):
+        if not os.path.isfile(path) or "__pycache__" in path:
+            continue
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            text = f.read()
+        if "--self-test" not in text or os.path.basename(path) == "tickets":
+            continue
+        n += 1
+        cmd = ([sys.executable, "-I", path] if text.startswith("#!/usr/bin/env python3") else ["bash", path]) + ["--self-test"]
+        code, out = sh(cmd, r.log("selftest"), timeout=600)
+        if code != 0:
+            bad.append("%s: exit %d: %s" % (os.path.relpath(path, ROOT), code, " | ".join(out.strip().splitlines()[-2:])))
+    r.note("selftest", "FAIL" if bad else "ok", "%d script(s)" % n, bad)
+
+
+def step_build(r):
+    t = time.time()
+    code, out = sh(["swift", "build", "--build-tests", "--enable-code-coverage"], r.log("build"), timeout=3600)
+    if code == 127:
+        r.note("build", "FAIL", "no swift toolchain")
+        return "infra"
+    r.note("build", "ok" if code == 0 else "FAIL", "", error_lines(out) if code else (), time.time() - t)
+    return code == 0
+
+
+def step_test(r):
+    t = time.time()
+    code, out, res, fails = r.swift_test("test", ["--parallel", "--enable-code-coverage", "--skip-build"])
+    r.results["test"] = res
+    c = lambda s: sum(1 for v in res.values() if v == s)
+    r.summary["tests"] = {"passed": c("passed"), "failed": c("failed"), "skipped": c("skipped")}
+    detail = "%d passed, %d failed, %d skipped" % (c("passed"), c("failed"), c("skipped"))
+    if code == 0:
+        r.note("test", "ok", detail, (), time.time() - t)
+        return True
+    lines = ["%s: %s" % f for f in fails] or error_lines(out)
+    r.note("test", "FAIL", detail, lines, time.time() - t)
+    return False
+
+
+def step_trace(r):
+    cmd = [sys.executable, "-I", os.path.join(ROOT, "scripts", "catalogue.py"), "trace",
+           "--xunit"] + xunit_files(os.path.join(r.dir, "test.xml"))
+    ids = os.path.join(ROOT, ".build", "tickets", "HE-%s-ids.txt" % r.ticket) if r.ticket else None
+    if ids and not os.path.isfile(ids):
+        sh([sys.executable, "-I", os.path.join(ROOT, "scripts", "catalogue.py"), "brief", str(r.ticket)], r.log("trace"))
+    if ids and os.path.isfile(ids):
+        cmd += ["--ids-file", ids]
+    elif r.ticket:
+        r.note("trace", "FAIL", "no ids for HE-%s (scripts/catalogue.py brief %s failed)" % (r.ticket, r.ticket))
+        return
+    code, out = sh(cmd, r.log("trace"))
+    lines = [l[7:] for l in out.splitlines() if l.startswith("trace: ")]
+    head = next((l for l in lines if "tests:" in l), "")
+    rest = [l for l in lines if l != head]
+    r.note("trace", "ok" if code == 0 else "FAIL", head + ("" if not r.ticket else "; done-check HE-%s" % r.ticket), rest)
+
+
+def step_validation(r):
+    t = time.time()
+    code, out, res, fails = r.swift_test("validation", ["--no-parallel", "--skip-build"],
+                                         env={"MTL_DEBUG_LAYER": "1", "MTL_SHADER_VALIDATION": "1"})
+    r.results["validation"] = res
+    msgs = [l.strip() for l in out.splitlines() if re.search(r"-\[MTL\w*Debug|Metal API Validation|Shader Validation Error", l)]
+    bad = code != 0 or msgs
+    r.note("validation", "FAIL" if bad else "ok", "%d Metal validation message(s)" % len(msgs),
+           (["%s: %s" % f for f in fails] + msgs) if bad else (), time.time() - t)
+
+
+def step_repeat(r):
+    t = time.time()
+    code, out, res, fails = r.swift_test("repeat", ["--parallel", "--skip-build"])
+    r.results["repeat"] = res
+    flaky = []
+    names = set().union(*[set(v) for v in r.results.values()])
+    for n in sorted(names):
+        seen = {k: v.get(n, "absent") for k, v in r.results.items()}
+        if len(set(seen.values())) > 1:
+            flaky.append("%s: %s" % (n, ", ".join("%s %s" % kv for kv in seen.items())))
+    r.summary["flaky"] = flaky
+    r.note("repeat", "FAIL" if flaky or code != 0 else "ok", "%d test(s) changed result across 3 runs" % len(flaky),
+           flaky or (["%s: %s" % f for f in fails] if code else ()), time.time() - t)
+
+
+def step_tsan(r):
+    if os.environ.get("GATE_TSAN", "1") == "0":
+        r.note("tsan", "skip", "GATE_TSAN=0")
+        return
+    t = time.time()
+    code, out, res, fails = r.swift_test("tsan", ["--sanitize=thread"], scratch=os.path.join(ROOT, ".build", "tsan"))
+    races = [l.strip() for l in out.splitlines() if "ThreadSanitizer" in l][:6]
+    r.note("tsan", "ok" if code == 0 and not races else "FAIL", "%d report line(s)" % len(races),
+           (races + ["%s: %s" % f for f in fails] or error_lines(out)) if code != 0 or races else (), time.time() - t)
+
+
+def step_ios(r):
+    t = time.time()
+    code, out = sh(["xcodebuild", "-list", "-json"], r.log("ios"), timeout=600)
+    if code == 127:
+        r.note("ios", "FAIL", "xcodebuild not found (B-HOST-1 cannot be shown here)")
+        return
+    try:
+        listing = json.JSONDecoder().raw_decode(out[out.index("{"):])[0]
+        schemes = (listing.get("workspace") or listing.get("project"))["schemes"]
+    except (ValueError, KeyError, TypeError):
+        r.note("ios", "FAIL", "xcodebuild -list gave no schemes", error_lines(out))
+        return
+    scheme = next((s for s in schemes if s.endswith("-Package")), schemes[0] if schemes else None)
+    if not scheme:
+        r.note("ios", "FAIL", "no scheme")
+        return
+    code, out = sh(["xcodebuild", "build", "-scheme", scheme, "-destination", "generic/platform=iOS",
+                    "-derivedDataPath", os.path.join(ROOT, ".build", "xcode"), "-quiet",
+                    "CODE_SIGNING_ALLOWED=NO"], r.log("ios"), timeout=3600)
+    r.note("ios", "ok" if code == 0 else "FAIL", "scheme %s, generic iOS" % scheme, error_lines(out) if code else (), time.time() - t)
+
+
+def lcov_lines():
+    """{relative path: {line: count}} from the coverage run, or None."""
+    code, out = sh(["swift", "test", "--show-codecov-path"])
+    cdir = os.path.dirname(out.strip().splitlines()[-1]) if code == 0 and out.strip() else ""
+    prof = [os.path.join(cdir, "default.profdata")] if os.path.isfile(os.path.join(cdir, "default.profdata")) else []
+    products = os.path.dirname(cdir)
+    bins = [b for b in glob.glob(os.path.join(products, "*.xctest", "Contents", "MacOS", "*")) if os.path.isfile(b)]
+    bins += [b for b in glob.glob(os.path.join(products, "*.xctest")) if os.path.isfile(b)]
+    if not prof or not bins:
+        return None
+    code, out = sh(["xcrun", "llvm-cov", "export", "-format=lcov", "-instr-profile", prof[0], bins[0]])
+    if code != 0:
+        return None
+    cov, cur = {}, None
+    for l in out.splitlines():
+        if l.startswith("SF:"):
+            p = os.path.realpath(l[3:])
+            root = os.path.realpath(ROOT) + os.sep
+            cur = cov.setdefault(p[len(root):], {}) if p.startswith(root) else None
+        elif l.startswith("DA:") and cur is not None:
+            n, c = l[3:].split(",")[:2]
+            cur[int(n)] = int(c)
+    return cov
+
+
+def ranges(nums):
+    out, start, prev = [], None, None
+    for n in sorted(nums):
+        if start is None:
+            start = prev = n
+        elif n == prev + 1:
+            prev = n
+        else:
+            out.append("%d" % start if start == prev else "%d-%d" % (start, prev))
+            start = prev = n
+    if start is not None:
+        out.append("%d" % start if start == prev else "%d-%d" % (start, prev))
+    return ",".join(out)
+
+
+def step_diffcov(r):
+    if not r.base:
+        r.note("diffcov", "skip", "no --base")
+        return
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    sys.dont_write_bytecode = True
+    import mutate
+    changed = {p: ls for p, ls in mutate.changed_lines(r.base).items() if p.endswith(".swift")}
+    cov = lcov_lines()
+    if cov is None:
+        r.note("diffcov", "FAIL", "no coverage data from the test step")
+        return
+    total, missed, lines = 0, 0, []
+    for path, nums in sorted(changed.items()):
+        try:
+            with open(os.path.join(ROOT, path), encoding="utf-8") as f:
+                src = f.read().split("\n")
+        except OSError:
+            continue
+        allowed = {n for n, l in enumerate(src, 1) if "cov:allow" in l} | {n + 1 for n, l in enumerate(src, 1) if "cov:allow" in l}
+        da = cov.get(path, {})
+        execd = [n for n in nums if n in da and n not in allowed]
+        miss = [n for n in execd if da[n] == 0]
+        total += len(execd)
+        missed += len(miss)
+        if miss:
+            lines.append("%s:%s" % (path, ranges(miss)))
+        if path not in cov and any(src[n - 1].strip() for n in nums if n <= len(src)):
+            lines.append("%s: not in the coverage report (no test reaches the file)" % path)
+    pct = 100.0 if total == 0 else 100.0 * (total - missed) / total
+    floor = float(os.environ.get("GATE_DIFFCOV_MIN", "90"))
+    r.summary["diffcov"] = {"percent": round(pct, 1), "uncovered": lines}
+    r.note("diffcov", "ok" if pct >= floor and not any("not in the coverage" in l for l in lines) else "FAIL",
+           "%.1f%% of %d changed executable lines (floor %g%%)" % (pct, total, floor), lines)
+
+
+def step_mutation(r):
+    if not r.base:
+        r.note("mutation", "skip", "no --base")
+        return
+    t = time.time()
+    out_json = os.path.join(r.dir, "mutation.json")
+    code, out = sh([sys.executable, "-I", os.path.join(ROOT, "scripts", "mutate.py"), "--base", r.base, "--out", out_json,
+                    "--max", os.environ.get("GATE_MUTANTS", "24"), "--seconds", os.environ.get("GATE_MUTATION_SECONDS", "600")],
+                   r.log("mutation"), timeout=7200)
+    head = next((l for l in out.splitlines() if l.startswith("mutation:") or l.startswith("mutate:")), "")
+    surv = [l for l in out.splitlines() if l.startswith("SURVIVED")]
+    r.summary["survivors"] = surv
+    status = "FAIL" if code != 0 else ("warn" if surv else "ok")
+    r.note("mutation", status, head.split(": ", 1)[-1], surv if code == 0 else out.strip().splitlines()[-6:], time.time() - t)
+
+
+def step_perf(r):
+    t = time.time()
+    code, out = sh([sys.executable, "-I", os.path.join(ROOT, "scripts", "perf.py"), "check"], r.log("perf"), timeout=3600)
+    lines = [l for l in out.splitlines() if l.startswith("perf:")]
+    head = lines[-1][6:] if lines else out.strip()[-200:]
+    status = "ok" if code == 0 else ("skip" if code == 4 else "FAIL")
+    r.note("perf", status, head, [l[6:] for l in lines[:-1]] if code not in (0, 4) or len(lines) > 1 else (), time.time() - t)
+
+
+def gpu_name():
+    code, out = sh(["xcrun", "swift", "-e", 'import Metal; print("GPU=" + (MTLCreateSystemDefaultDevice()?.name ?? "none"))'], timeout=120)
+    m = re.search(r"GPU=(.*)", out)
+    return m.group(1).strip() if m else "unknown"
+
+
+def lock():
+    os.makedirs(GATE, exist_ok=True)
+    path = os.path.join(GATE, "lock")
+    if os.path.isfile(path):
+        try:
+            pid = int(open(path).read().split()[0])
+            os.kill(pid, 0)
+            print("gate: exit 2 another gate (pid %d) is running in this checkout" % pid)
+            sys.exit(2)
+        except (ValueError, IndexError, ProcessLookupError, PermissionError):
+            pass
+    with open(path, "w") as f:
+        f.write("%d\n" % os.getpid())
+    return path
+
+
+def launch(tier, ticket, base):
+    """Start the run as a process of its own and follow it; the run outlives this call."""
+    run_dir = os.path.join(GATE, time.strftime("%Y%m%d-%H%M%S"))
+    while os.path.exists(run_dir):
+        run_dir += "x"
+    os.makedirs(run_dir)
+    cmd = [sys.executable, "-I", os.path.abspath(__file__), tier, "--child", run_dir]
+    cmd += (["--ticket", ticket] if ticket else []) + (["--base", base] if base else [])
+    with open(os.path.join(run_dir, "out.txt"), "w") as out:
+        p = subprocess.Popen(cmd, cwd=ROOT, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    with open(os.path.join(run_dir, "pid.txt"), "w") as f:
+        f.write("%d\n" % p.pid)
+    return follow(run_dir, p)
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def follow(run_dir, proc=None):
+    out_path, exit_path = os.path.join(run_dir, "out.txt"), os.path.join(run_dir, "exit.txt")
+    try:
+        pid = proc.pid if proc else int(open(os.path.join(run_dir, "pid.txt")).read().strip())
+    except (OSError, ValueError):
+        print("gate: exit 3 no run at %s" % run_dir)
+        return 3
+    pos = 0
+
+    def drain():
+        nonlocal pos
+        try:
+            with open(out_path) as f:
+                f.seek(pos)
+                chunk = f.read()
+                pos = f.tell()
+        except OSError:
+            chunk = ""
+        sys.stdout.write(chunk)
+        sys.stdout.flush()
+
+    while True:
+        done = os.path.isfile(exit_path)
+        gone = (proc.poll() is not None) if proc else not alive(pid)
+        drain()
+        if done or gone:
+            break
+        time.sleep(1)
+    time.sleep(0.2)
+    drain()
+    if os.path.isfile(exit_path):
+        return int(open(exit_path).read().strip() or 3)
+    if proc and proc.returncode == 2:
+        return 2
+    print("gate: exit 3 the run at %s ended without a result" % os.path.relpath(run_dir, ROOT))
+    return 3
+
+
+def run(tier, ticket, base, run_dir):
+    lk = lock()
+    r = Run(tier, ticket, base, run_dir)
+    started = time.time()
+    head = git("rev-parse", "HEAD")
+    tree = "dirty" if git("status", "--porcelain") else "clean"
+    gpu = gpu_name() if tier == "full" and r.has_package else "not-probed"
+    if base:
+        base = r.base = git("rev-parse", base)
+    with open(os.path.join(r.dir, "meta.txt"), "w") as f:
+        f.write("head=%s\ntree=%s\ntier=%s\nbase=%s\nticket=%s\ngpu=%s\nstarted=%d\n" % (
+            head, tree, tier, base or "", ticket or "", gpu, started))
+    print("gate: %s run at %s, head %s, tree %s" % (tier, os.path.relpath(r.dir, ROOT), head[:9], tree))
+    code = 0
+    try:
+        step_lint(r)
+        if tier == "full":
+            step_selftest(r)
+        if not r.has_package:
+            for s in (STEPS_FULL if tier == "full" else STEPS_FAST):
+                if s not in ("lint", "selftest"):
+                    r.note(s, "skip", "no Package.swift yet")
+        elif tier == "full" and gpu in ("none", "unknown"):
+            r.note("build", "skip", "no Metal device (%s): a full run here proves nothing about GPU tests" % gpu)
+            code = 3
+        else:
+            built = step_build(r)
+            if built == "infra":
+                code = 3
+            later = [s for s in (STEPS_FULL if tier == "full" else STEPS_FAST) if s not in ("lint", "selftest", "build")]
+            if built is True:
+                green = step_test(r)
+                step_trace(r)
+                if tier == "full":
+                    if green:
+                        for fn in (step_validation, step_repeat, step_tsan, step_ios, step_diffcov, step_mutation, step_perf):
+                            fn(r)
+                    else:
+                        for s in later[2:]:
+                            r.note(s, "skip", "the test step failed")
+            elif built is False:
+                for s in later:
+                    r.note(s, "skip", "the build failed")
+        if code == 0 and r.failed:
+            code = 1
+    finally:
+        os.remove(lk)
+    r.summary.update({"head": head, "tree": tree, "tier": tier, "ticket": ticket, "base": base, "gpu": gpu,
+                      "exit": code, "steps": r.steps})
+    with open(os.path.join(r.dir, "summary.json"), "w") as f:
+        json.dump(r.summary, f, indent=1)
+    with open(os.path.join(r.dir, "exit.txt"), "w") as f:
+        f.write("%d\n" % code)
+    t = r.summary.get("tests", {})
+    print("gate: exit %d tier=%s head=%s tree=%s tests=%s/%s/%s run=%s" % (
+        code, tier, head[:9], tree, t.get("passed", "-"), t.get("failed", "-"), t.get("skipped", "-"),
+        os.path.relpath(r.dir, ROOT)))
+    return code
+
+
+def meta(run_dir):
+    out = {}
+    with open(os.path.join(run_dir, "meta.txt")) as f:
+        for line in f:
+            k, _, v = line.strip().partition("=")
+            out[k] = v
+    return out
+
+
+def covers(run_dir, rev, ticket, changed=None):
+    """Does a finished full run still prove rev? Only when nothing a test can read changed since."""
+    try:
+        m = meta(run_dir)
+        code = open(os.path.join(run_dir, "exit.txt")).read().strip()
+    except OSError:
+        return False, "no finished run at %s" % run_dir
+    if code != "0":
+        return False, "that run exited %s" % code
+    if m.get("tier") != "full" or m.get("tree") != "clean":
+        return False, "that run was tier=%s tree=%s" % (m.get("tier"), m.get("tree"))
+    if ticket and m.get("ticket") != str(ticket):
+        return False, "that run checked ticket %s" % (m.get("ticket") or "none")
+    if changed is None:
+        c, out = sh(["git", "diff", "--name-only", m["head"], rev])
+        if c != 0:
+            return False, "git cannot compare %s with %s" % (m["head"][:9], rev)
+        changed = [p for p in out.splitlines() if p]
+    code_paths = [p for p in changed if not DOCS_ONLY.search(p)]
+    if code_paths:
+        return False, "changed since: " + " ".join(code_paths[:6])
+    return True, "covered: %d docs-only path(s) changed since %s" % (len(changed), m["head"][:9])
+
+
+def self_test():
+    import tempfile
+    checks = [
+        ("docs are docs-only", bool(DOCS_ONLY.search("docs/process/README.md")) and bool(DOCS_ONLY.search("CLAUDE.md"))
+         and bool(DOCS_ONLY.search(".claude/agents/x.md"))),
+        ("catalogue is not", not DOCS_ONLY.search("docs/TestCatalogue.md")),
+        ("perf baseline is not", not DOCS_ONLY.search("docs/perf/baseline.json")),
+        ("sources are not", not DOCS_ONLY.search("Sources/Engine/A.swift") and not DOCS_ONLY.search("scripts/gate")),
+        ("ranges", ranges([3, 1, 2, 7, 9, 10]) == "1-3,7,9-10"),
+        ("error lines", error_lines("a\nx.swift:3:1: error: no\nb\nx.swift:3:1: error: no\n") == ["x.swift:3:1: error: no"]),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        x = os.path.join(tmp, "t.xml")
+        with open(x, "w") as f:
+            f.write('<testsuites><testsuite><testcase classname="A" name="p()"/>'
+                    '<testcase classname="A" name="f()"><failure message="boom"/></testcase>'
+                    '<testcase classname="A" name="s()"><skipped/></testcase></testsuite></testsuites>')
+        res, fails = xunit([x, os.path.join(tmp, "absent.xml")])
+        checks.append(("xunit", res == {"A.p()": "passed", "A.f()": "failed", "A.s()": "skipped"} and fails == [("A.f()", "boom")]))
+
+        def mk(exit_code, **kv):
+            d = tempfile.mkdtemp(dir=tmp)
+            m = {"head": "abc", "tree": "clean", "tier": "full", "ticket": "7"}
+            m.update(kv)
+            with open(os.path.join(d, "meta.txt"), "w") as f:
+                f.write("".join("%s=%s\n" % i for i in m.items()))
+            with open(os.path.join(d, "exit.txt"), "w") as f:
+                f.write("%s\n" % exit_code)
+            return d
+        checks += [
+            ("covers docs-only", covers(mk(0), "x", 7, ["docs/a.md", "README.md"])[0]),
+            ("covers same head", covers(mk(0), "x", 7, [])[0]),
+            ("code change not covered", not covers(mk(0), "x", 7, ["docs/a.md", "Tests/T.swift"])[0]),
+            ("red run not covered", not covers(mk(1), "x", 7, [])[0]),
+            ("fast run not covered", not covers(mk(0, tier="fast"), "x", 7, [])[0]),
+            ("dirty run not covered", not covers(mk(0, tree="dirty"), "x", 7, [])[0]),
+            ("other ticket not covered", not covers(mk(0, ticket="8"), "x", 7, [])[0]),
+            ("missing run not covered", not covers(os.path.join(tmp, "none"), "x", 7, [])[0]),
+        ]
+    failed = [n for n, ok in checks if not ok]
+    for n in failed:
+        print("FAIL " + n)
+    print("gate self-test: %d/%d" % (len(checks) - len(failed), len(checks)))
+    return 1 if failed else 0
+
+
+def main():
+    args = sys.argv[1:]
+    if "--self-test" in args:
+        sys.exit(self_test())
+    if "-h" in args or "--help" in args:
+        print(__doc__)
+        return
+
+    def opt(name):
+        if name in args:
+            i = args.index(name)
+            v = args[i + 1]
+            del args[i:i + 2]
+            return v
+        return None
+
+    ticket, base = opt("--ticket"), opt("--base")
+    if ticket:
+        ticket = ticket.upper().replace("HE-", "").lstrip("#")
+    if "--covers" in args:
+        i = args.index("--covers")
+        rest = args[i + 1:]
+        if not rest:
+            print(__doc__)
+            sys.exit(64)
+        ok, why = covers(rest[0], rest[1] if len(rest) > 1 else "HEAD", ticket)
+        print("gate: " + why)
+        sys.exit(0 if ok else 1)
+    if "--wait" in args:
+        i = args.index("--wait")
+        if len(args) <= i + 1:
+            print(__doc__)
+            sys.exit(64)
+        sys.exit(follow(args[i + 1]))
+    child = opt("--child")
+    tier = args[0] if args else "fast"
+    if tier not in ("fast", "full") or len(args) > 1:
+        print(__doc__)
+        sys.exit(64)
+    sys.exit(run(tier, ticket, base, child) if child else launch(tier, ticket, base))
+
+
+if __name__ == "__main__":
+    main()

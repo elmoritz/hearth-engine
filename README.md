@@ -37,3 +37,6 @@ host only (tests, viewer, harness), not a product platform (D19).
   adapter and UI suites).
 - [docs/Decisions.md](docs/Decisions.md): decided and open design decisions.
 - [docs/research/](docs/research/README.md): the research behind both.
+- [docs/Architecture.md](docs/Architecture.md): the engine as built, kept current by each ticket.
+- [docs/process/README.md](docs/process/README.md): how a milestone is built: the loop, the gate, the test rules.
+- [docs/retros/](docs/retros/README.md): what each milestone cost and what it changed about the process.

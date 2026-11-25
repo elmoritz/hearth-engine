@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# hearth-engine tickets are GitHub issues in elmoritz/hearth-engine on the IdleVillage board (#18).
+# HE-NNN is issue #NNN. The one implementation lives in the game repo; this shim points it here,
+# so every command and agent in this repo calls `scripts/tickets` and nothing else.
+#
+# The game checkout is found at $IDLE_VILLAGE_REPO, else beside this repo's main checkout
+# (a linked worktree resolves through git's common dir).
+set -euo pipefail
+common="$(cd "$(dirname "$0")/.." && cd "$(git rev-parse --git-common-dir)" && pwd)"
+game="${IDLE_VILLAGE_REPO:-$(dirname "$(dirname "$common")")/idle-village-game}"
+if [[ ! -x "$game/scripts/tickets" ]]; then
+  echo "tickets: no scripts/tickets at $game; set IDLE_VILLAGE_REPO to the idle-village-game checkout" >&2
+  exit 2
+fi
+export TICKETS_REPO="${TICKETS_REPO:-elmoritz/hearth-engine}"
+exec "$game/scripts/tickets" "$@"

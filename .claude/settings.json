@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/scripts/retro/extract.py\" --hook",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
