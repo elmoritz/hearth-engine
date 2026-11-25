@@ -37,6 +37,17 @@ public enum FLIP {
     /// The viewing condition of the paper: a 0.7 m wide, 3840 px monitor seen from 0.7 m.
     public static let referencePixelsPerDegree = pixelsPerDegree(distanceMetres: 0.7, pixelsPerMetre: 3840 / 0.7)
 
+    /// The viewing conditions the filters are defined for. Below it the kernels degenerate (at 0 every image
+    /// filters to black and nothing can fail); above it they outgrow any image the engine can hold.
+    public static let supportedPixelsPerDegree: ClosedRange<Double> = 1...1024
+
+    /// Throws `invalidPixelsPerDegree` for a value outside `supportedPixelsPerDegree`; NaN is outside it.
+    static func requireSupported(pixelsPerDegree: Double) throws(GoldenError) {
+        guard supportedPixelsPerDegree.contains(pixelsPerDegree) else {
+            throw .invalidPixelsPerDegree("\(pixelsPerDegree)")
+        }
+    }
+
     public static func pixelsPerDegree(distanceMetres: Double, pixelsPerMetre: Double) -> Double {
         distanceMetres * pixelsPerMetre * Double.pi / 180
     }
@@ -46,6 +57,7 @@ public enum FLIP {
         _ expected: PixelImage,
         pixelsPerDegree: Double = referencePixelsPerDegree
     ) throws(GoldenError) -> FLIPResult {
+        try requireSupported(pixelsPerDegree: pixelsPerDegree)
         try NearExact.requireSameSize(actual, expected)
         let width = actual.width
         let height = actual.height

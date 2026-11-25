@@ -199,6 +199,31 @@ import Testing
         #expect(ranked.percentile99 == ranked.map.sorted()[197])
     }
 
+    @Test func `E-GOLD-2 a viewing condition that is not a positive finite number is a typed error`() throws {
+        let directory = Self.artifactDirectory("viewing")
+        let grey = try PixelImage(width: 4, height: 4, filledWith: RGBA8(120, 120, 120))
+        let white = try PixelImage(width: 4, height: 4, filledWith: .white)
+        let loose = FLIPThreshold(mean: 1, percentile99: 1)
+        let refused: [(Double, String)] = [
+            (0, "0.0"), (-30, "-30.0"), (.nan, "nan"), (.infinity, "inf"), (-.infinity, "-inf"), (0.999, "0.999"), (1024.5, "1024.5"),
+            (.leastNonzeroMagnitude, "5e-324"), (.greatestFiniteMagnitude, "1.7976931348623157e+308"),
+        ]
+        for (value, text) in refused {
+            #expect(throws: GoldenError.invalidPixelsPerDegree(text)) { try FLIP.compare(white, grey, pixelsPerDegree: value) }
+            // Refused even for equal images: the check comes before any comparison.
+            #expect(throws: GoldenError.invalidPixelsPerDegree(text)) { try FLIP.compare(grey, grey, pixelsPerDegree: value) }
+            #expect(throws: GoldenError.invalidPixelsPerDegree(text)) {
+                try GoldenCheck.check(white, against: grey, tier: .flip(loose, pixelsPerDegree: value), name: "viewing", artifactDirectory: directory)
+            }
+        }
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        // The ends of the supported range are accepted, and a real difference still scores there.
+        #expect(FLIP.supportedPixelsPerDegree == 1...1024)
+        #expect(try FLIP.compare(white, grey, pixelsPerDegree: 1).mean > 0.1)
+        let tiny = try PixelImage(width: 1, height: 1, filledWith: .white)
+        #expect(try FLIP.compare(tiny, try PixelImage(width: 1, height: 1, filledWith: .black), pixelsPerDegree: 1024).mean > 0.5)
+    }
+
     @Test func `E-GOLD-2 the filters are normalised and the colour spaces invert`() {
         for pixelsPerDegree in [10.0, 30, FLIP.referencePixelsPerDegree] {
             let spatial = FLIP.spatialFilters(pixelsPerDegree)

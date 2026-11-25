@@ -4,6 +4,8 @@ import HearthEngine
 public enum GoldenError: Error, Sendable, Equatable {
     case sizeMismatch(actualWidth: Int, actualHeight: Int, expectedWidth: Int, expectedHeight: Int)
     case artifactWriteFailed(String)
+    /// A viewing condition outside `FLIP.supportedPixelsPerDegree`, or not a number. The text is the value.
+    case invalidPixelsPerDegree(String)
 }
 
 /// The near-exact tier of the golden-image method: analytic and same-configuration tests.
