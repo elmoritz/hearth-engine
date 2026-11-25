@@ -18,7 +18,7 @@ what and when; they point here for the rules, so a rule is written once.
 | `scripts/lint.py` | The catalogue's "a lint fails on ..." rules, with `// lint:allow <rule> - <why>` |
 | `scripts/mutate.py` | Mutation check over the changed lines: would a test notice? |
 | `scripts/perf.py` | Probes against `docs/perf/baseline.json`: a tripwire on the Mac, not the device budgets |
-| `scripts/land.sh` | Fast-forwards `main` to an approved branch and pushes it; nobody keeps `main` checked out |
+| `scripts/land.sh` | Fast-forwards `main` to an approved branch and pushes it |
 | `scripts/loop-close.sh` | Posts the review, lands, and ships a ticket or leaves it waiting for the owner |
 | `scripts/retro/extract.py` | Turns a milestone's logs and transcripts into `docs/retros/<M>.metrics.json` |
 | `/ticket:auto <M>` | The loop over one milestone |
@@ -104,7 +104,7 @@ E-PROOF-2 ships, the done-check reads the engine's.
 
 ## Branches and commits
 
-- Nobody keeps `main` checked out. The loop's home is a detached HEAD at `main`; work happens on
+- The loop's home is `main`, in the checkout it runs in, and no other worktree holds `main`. Work happens on
   `<type>/HE-N-<slug>` (`feat`, `fix`, `tech`, `docs`); `main` moves only through `scripts/land.sh`, by
   fast-forward, and is pushed in the same step.
 - Commit messages: `<area>: <what> (HE-N; E-HAR-1, E-HAR-2)`: the ticket and the catalogue ids the commit touches.

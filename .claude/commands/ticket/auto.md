@@ -41,13 +41,13 @@ Everything lives in `.build/auto-loop/` (gitignored):
    nohup caffeinate -dims >/dev/null 2>&1 & echo $! > .build/auto-loop/caffeinate.pid
    ```
    Every exit path ends it with `kill "$(cat .build/auto-loop/caffeinate.pid)"`.
-2. **Log** `loop start <M> <args>`, then `scripts/land.sh --sync`. Exit `0`: log `sync <main sha>`; the first `sync` of a milestone is its start commit, which the audit needs. Exit `8`: log `halt main-ahead`, stop. Exit `9`: `halt origin-unreachable`, stop. Exit `3`: `halt main-held`, stop.
+2. **Log** `loop start <M> <args>`, then `scripts/land.sh --sync`. Exit `0`: log `sync <main sha>`; the first `sync` of a milestone is its start commit, which the audit needs. Exit `8` (`main` and `origin/main` have diverged): log `halt main-diverged`, stop. Exit `9`: `halt origin-unreachable`, stop. Exit `3`: `halt main-held`, stop.
 3. **Resume interrupted work.** `scripts/tickets list --stage in-progress --label claimed:auto-loop --milestone <M> --json`. For each, its branch is `git branch --list '*/HE-N-*'`:
    - tree dirty on that branch: `git stash push -u -m "auto-loop interrupted HE-N <ISO time>"`, log `stashed`. Never discard it.
-   - `git switch --detach main`.
+   - `git switch main`.
    - the branch has commits of its own (`git log main..<branch>`): it resumes at step 1.4 before anything new is picked; log `resumed`.
    - no branch or no commits: `scripts/tickets unclaim N`.
-4. **Clean tree at home.** `git status --porcelain` is empty and HEAD is `main`'s tip, detached (`git switch --detach main`). Otherwise stop (`--unattended`: log `halt dirty tree`). If `git worktree list --porcelain` shows another worktree on `refs/heads/main`: `halt main-held`.
+4. **Clean tree at home.** `git status --porcelain` is empty and the checkout is on `main` (`git switch main`). Otherwise stop (`--unattended`: log `halt dirty tree`). If `git worktree list --porcelain` shows another worktree on `refs/heads/main`: `halt main-held`.
 5. **Baseline.** `scripts/gate full` on `main` (see *Gate runs*). Red: log `halt main is red` and stop, since the loop cannot tell its own breakage from existing breakage. Exit `3`: `halt infra`, stop. If its output shows a step skipped for a reason other than "no Package.swift yet" or "no probes yet", write a loop draft.
 6. **Queue.** `scripts/tickets queue <M> --json`: `eligible`, `waiting` (with `waiting_on`) and `parked`, sorted by `(priority, -effort)`.
 7. **Start gate.** Show the queue (resumed first, then eligible, waiting with what they wait on, parked). Without `--unattended`, ask via `AskUserQuestion`: "Run the auto loop over <M> (<n> tickets)?", header "Auto loop", options **Start** (Recommended), **One ticket**, **Cancel**. After it, ask nothing until wrap-up, except a reviewer's `Needs owner:` question.
@@ -70,9 +70,9 @@ Everything lives in `.build/auto-loop/` (gitignored):
    - `DONE`: log `implement-done`.
 4. **Review rounds**, round = 1…max-rounds, each starting with a checkpoint. The base is `git merge-base main <branch>`, computed fresh each round.
    1. **Proof.** `git switch <branch>`; the tree must be clean. If `scripts/gate --covers <RUN_DIR from the report> <branch> --ticket N` exits `0`, log `full-reuse <run_dir>`. Otherwise run `scripts/gate full --ticket N --base <base>` yourself and log `full <run_dir> <exit>`.
-      - exit `3`: log `infra`, run it once more; a second `3`: `git switch --detach main`, log `halt infra`, wrap up. Never park for infrastructure.
+      - exit `3`: log `infra`, run it once more; a second `3`: `git switch main`, log `halt infra`, wrap up. Never park for infrastructure.
       - exit `1`: no review this round. Send the gate's failing lines to the implementer as `fix HE-N`, each a `blocker` (step 4), and count the round.
-   2. **Review.** Launch a new `ticket-reviewer` (foreground) with: ticket, branch, base, round, `GATE: <run_dir>`, and from round 2 the implementer's `DISPUTED` lines. Then `git switch --detach main`. Log `review <n> <verdict> <k findings>`.
+   2. **Review.** Launch a new `ticket-reviewer` (foreground) with: ticket, branch, base, round, `GATE: <run_dir>`, and from round 2 the implementer's `DISPUTED` lines. Then `git switch main`. Log `review <n> <verdict> <k findings>`.
    3. **Decide.**
       - `INFRA`: log `infra`, repeat the round once without counting it; twice: `halt infra`, wrap up.
       - `APPROVE`: **close**, continue with the next ticket.
@@ -89,12 +89,12 @@ Everything lives in `.build/auto-loop/` (gitignored):
    - `0`: shipped.
    - `10`: landed, in review, waiting for the owner. Add N to `landed`. This is a normal outcome, not a park.
    - `4`: `main` moved. `git rebase main <branch>`; a conflict: `git rebase --abort` and park. Otherwise log `rebased`, run `scripts/gate full --ticket N --base <new base>` unless `--covers` still holds, and run the script again. A red gate after the rebase goes back to the implementer as a `fix`, once; then park.
-   - `3`: attended, ask the owner to detach the worktree that holds `main`, then run it again. `--unattended`: `halt main-held`, wrap up.
-   - `8`: `halt main-ahead`, wrap up. `9`: `halt origin-unreachable`, wrap up. `1`: `halt tickets close 1` with its output, wrap up.
+   - `3`: another worktree holds `main`. Attended: ask the owner to put that worktree on another branch, then run it again. `--unattended`: `halt main-held`, wrap up.
+   - `8`: `halt main-diverged`, wrap up. `9`: `halt origin-unreachable`, wrap up. `1`: `halt tickets close 1` with its output, wrap up.
 
 ### Park (blocked or not approved)
 
-1. `git switch --detach main`. The branch stays as it is.
+1. `git switch main`. The branch stays as it is.
 2. Write the reason (the blocked reason, or the open findings verbatim) to `.build/tickets/HE-N-park.md` and run `scripts/tickets park N --reason-file .build/tickets/HE-N-park.md --branch <branch>` (no `--branch` when there is none).
 3. Add to `parked`, log `parked`. Tickets that depend on it drop out of eligibility by themselves.
 
@@ -104,7 +104,7 @@ Every build and test goes through `scripts/gate`. This session starts a full run
 
 ## Step 2: wrap up
 
-1. Home is detached at `main` and clean, apart from an in-flight ticket left for resume.
+1. Home is on `main` and clean, apart from an in-flight ticket left for resume.
 2. **Milestone audit**, when at least one ticket landed in this run and the queue is empty: `scripts/gate full` on `main` unless a covering run exists; then launch `engine-auditor` with `MILESTONE: <M>`, `START: <the sha of the milestone's first sync line>`, `HEAD: <main>`, `GATE: <run_dir>`, `REPORT_FILE: .build/auto-loop/audit-<M>.md`. Log `audit <n> findings`. It is advisory: nothing it says reopens a ticket.
 3. **Follow-ups.** If a ticket closed or a draft is waiting, run `/ticket:followups <M>`: read `.claude/commands/ticket/followups.md` and follow it in this session, with `--unattended` when this run is. Log `followups <f> filed <i> inbox`.
 4. **Retrospective**, when the queue is empty (not on a session stop, `STOP`, deadline or halt): run `/milestone:retro <M>`: read `.claude/commands/milestone/retro.md` and follow it in this session; with `--unattended` pass `--report-only`. Log `retro <f> findings <a> applied` (or `report-only`).
@@ -162,7 +162,7 @@ Stop it gracefully with `touch .build/auto-loop/STOP`. After a crash or a usage 
 ## Hard rules
 
 - One ticket at a time. Never two implementers in parallel: they share `main`, the package and the build directory.
-- Ticket state changes only through `scripts/tickets`. Code lands on `main` only through `scripts/land.sh` (inside `scripts/loop-close.sh`), as a fast-forward that is pushed. The loop's home is a detached HEAD at `main`, never `git switch main`.
+- Ticket state changes only through `scripts/tickets`. Code lands on `main` only through `scripts/land.sh` (inside `scripts/loop-close.sh`), as a fast-forward that is pushed. The loop's home between tickets is `main` in the checkout it runs in; no other worktree may hold `main`. This session never commits on `main` except the retrospective's changes.
 - Never amend, force-push, `--no-verify`, or push yourself. No `gh` writes, no pull requests.
 - Never `swift build`, `swift test` or `xcodebuild` directly. Use `scripts/gate`.
 - Don't overrule the reviewer or the gate. A ticket lands only on `APPROVE` together with a green full run that covers the landed head.

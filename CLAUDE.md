@@ -23,4 +23,4 @@ Swift + Metal 2D renderer; first consumer is IdleVillage (`../idle-village-game`
   `swift test` or `xcodebuild` directly.
 - For a ticket, read its brief (`python3 -I scripts/catalogue.py brief N`) instead of the whole catalogue.
 - A test carries its catalogue id in its function name. Skipped is not passed. An agent never approves a reference
-  image. `main` moves only through `scripts/land.sh`; nobody keeps it checked out.
+  image. `main` moves only through `scripts/land.sh`, by fast-forward.

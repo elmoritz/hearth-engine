@@ -16,9 +16,9 @@
 # Exit codes:
 #   0   shipped
 #   10  landed, in review, waiting for the owner (proof rule 1, or device ids)
-#   3   a worktree has main checked out: detach it, then run again
+#   3   another worktree has main checked out: free it there, then run again
 #   4   the branch does not contain main: rebase per auto.md, then run again
-#   8   main has commits origin/main lacks: log `halt main-ahead`, wrap up
+#   8   main and origin/main have diverged: log `halt main-diverged`, wrap up
 #   9   origin unreachable: log `halt origin-unreachable`, wrap up
 #   1   a scripts/tickets or git step failed; its output is above
 set -euo pipefail
@@ -74,7 +74,7 @@ self_test() {
   git init -q -b main "$tmp/repo"
   g() { git -C "$tmp/repo" -c user.email=t@t -c user.name=t "$@"; }
   g commit -q --allow-empty -m base
-  g switch -q -c feat/HE-7-a && g commit -q --allow-empty -m a1 && g switch -q --detach main
+  g switch -q -c feat/HE-7-a && g commit -q --allow-empty -m a1 && g switch -q main
   mkdir -p "$tmp/repo/.build/tickets"
   # stub tickets: records calls, reports the stage from a file
   cat > "$tmp/tickets" <<'T'
@@ -109,12 +109,12 @@ T
     && pass=$((pass+1)) || echo "FAIL resume and ship"
 
   rm -f "$tmp/stage"; : > "$tmp/calls"
-  g switch -q -c feat/HE-8-b "$(g rev-list --max-parents=0 main)" && g commit -q --allow-empty -m b1 && g switch -q --detach main
+  g switch -q -c feat/HE-8-b "$(g rev-list --max-parents=0 main)" && g commit -q --allow-empty -m b1 && g switch -q main
   echo "Round 1: APPROVE" > "$tmp/repo/.build/tickets/HE-8-agent-review.md"
   run 8 feat/HE-8-b && rc=0 || rc=$?
   [[ $rc == 4 ]] && ! grep -q "^move" "$tmp/calls" && pass=$((pass+1)) || echo "FAIL main moved"
 
-  g rebase -q main feat/HE-8-b && g switch -q --detach main
+  g rebase -q main feat/HE-8-b && g switch -q main
   (cd "$tmp/repo" && STUB_CLOSE_FAILS=1 STUB_DIR="$tmp" LOOP_ROOT="$tmp/repo" LOOP_TICKETS="$tmp/tickets" LAND_NO_PUSH=1 bash "$self" 8 feat/HE-8-b) >/dev/null 2>&1 && rc=0 || rc=$?
   [[ $rc != 0 && $rc != 10 && "$(cat "$tmp/stage")" == in-review ]] && pass=$((pass+1)) || echo "FAIL close failure"
 

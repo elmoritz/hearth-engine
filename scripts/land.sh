@@ -1,63 +1,65 @@
 #!/usr/bin/env bash
-# Land one approved branch on main by fast-forward, without checking main out,
-# and publish it on origin/main. Ported from IdleVillage's scripts/land.sh
-# (there: IV-522), without its code/art tracks: this repo has one track.
+# Land one approved branch on main by fast-forward and publish it on origin/main.
 #
 # Usage:
 #   scripts/land.sh <branch>
-#   scripts/land.sh HEAD        a commit made on the detached home (a retro change,
+#   scripts/land.sh HEAD        push a commit made on main itself (a retro change,
 #                               a perf baseline, a milestone report)
 #   scripts/land.sh --sync      only bring main up to origin/main (the loop's preflight)
 #   scripts/land.sh --self-test
 #
-# Nobody keeps main checked out: the loop and the owner work on ticket branches
-# or a detached HEAD at main. `git fetch . <branch>:main` moves main only as a
-# fast-forward, and the ref update is atomic. The checkout this runs in follows
-# main when it was on <branch> or detached at main's old tip: it ends detached
-# at the new main, so the branch can be deleted.
+# This repo has one track and one loop, so main is simply checked out in the
+# checkout the loop runs in. To land, the script switches this checkout to main
+# if it is on something else, fast-forwards main to origin/main, fast-forwards it to
+# <branch> (`git merge --ff-only`, never a merge commit), and pushes
+# (`git push origin main:main`, plain, never forced). The checkout ends on main.
 #
-# Origin. With a remote `origin` (and LAND_NO_PUSH unset), landing starts with
-# `git fetch origin main`, retrying a failure 4 times after 2, 4, 8 and 16 s
-# (LAND_BACKOFF), and fast-forwards main to origin/main. Main with commits
-# origin/main lacks is refused (exit 8): only this script moves main, and it
-# always pushes. After the local fast-forward it runs `git push origin
-# main:main` (plain, never forced). When origin rejects it because someone
-# landed first, main goes back to the origin tip and the exit is 4. A push that
-# still fails after the retries puts main back and exits 9. LAND_NO_PUSH=1, or
-# a repo without origin, keeps landing purely local.
+# Origin. With a remote `origin` (and LAND_NO_PUSH unset) it fetches first,
+# retrying a failure 4 times after 2, 4, 8 and 16 s (LAND_BACKOFF). Main may be
+# ahead of origin/main (a commit made by hand): it is pushed along. When origin
+# rejects the push because someone landed first, the landing is taken back, main
+# follows origin/main, and the exit is 4. A push that still fails after the
+# retries takes the landing back and exits 9. LAND_NO_PUSH=1, or a repo without
+# origin, keeps landing purely local.
 #
 # Exit codes:
 #   0  landed (and pushed); prints `land: <branch> -> main <sha>`
-#      (--sync: main equals origin/main, or there is no origin to sync with)
-#   3  a worktree has main checked out (named on stderr); detach it there
-#      (`git switch --detach main`), then run this again
+#      (--sync: main contains origin/main, or there is no origin to sync with)
+#   3  another worktree has main checked out (named on stderr); run the loop
+#      there, or put that worktree on another branch
 #   4  <branch> does not contain main (main moved, here or on origin): rebase
 #      it onto main, re-run the gate, then run this again
-#   8  main has commits origin/main lacks; nothing moved; the owner pushes or
-#      resets main, then run this again
-#   9  origin unreachable: fetch or push still failing after the retries; main
-#      is where origin/main was, nothing published
-#   1  <branch> does not exist, or git refused the update
+#   8  main and origin/main have diverged; nothing moved; the owner sorts it out
+#   9  origin unreachable: fetch or push still failing after the retries;
+#      nothing published (HEAD: the commit stays on main; run this again)
+#   1  <branch> does not exist, this checkout cannot switch to main (local
+#      changes in the way), or git refused the update
 set -euo pipefail
 
 read -r -a BACKOFF <<< "${LAND_BACKOFF:-2 4 8 16}"
 
-usage() { sed -n '2,40p' "$0" >&2; exit 64; }
+usage() { sed -n '2,37p' "$0" >&2; exit 64; }
 
 use_origin() { [[ "${LAND_NO_PUSH:-}" != 1 ]] && git remote get-url origin >/dev/null 2>&1; }
 
 check_holder() {
-  local holder
+  local here holder
+  here="$(git rev-parse --show-toplevel)"
   holder="$(git worktree list --porcelain | awk '/^worktree /{w=substr($0,10)} $0=="branch refs/heads/main"{print w}')"
-  if [[ -n "$holder" ]]; then
-    echo "land: main is checked out at $holder; detach it there (git switch --detach main), then land again" >&2
+  if [[ -n "$holder" && "$(cd "$holder" && pwd -P)" != "$(cd "$here" && pwd -P)" ]]; then
+    echo "land: main is checked out at $holder; run the loop there, or put that worktree on another branch" >&2
     exit 3
   fi
 }
 
+on_main() {
+  [[ "$(git branch --show-current)" == main ]] && return 0
+  git switch -q main 2>/dev/null \
+    || { echo "land: cannot switch this checkout to main (local changes in the way?)" >&2; exit 1; }
+}
+
 fetch_once() { git fetch -q origin "+refs/heads/main:refs/remotes/origin/main"; }
 
-# fetch_origin: fetch origin/main, retrying with the backoff; 1 when it still fails.
 fetch_origin() {
   local delay
   for delay in "${BACKOFF[@]}" ""; do
@@ -69,56 +71,47 @@ fetch_origin() {
   return 1
 }
 
-# follow_home <old>: a checkout detached at main's old tip follows main.
-follow_home() {
-  if [[ -z "$(git branch --show-current)" && "$(git rev-parse HEAD)" == "$1" ]]; then
-    git switch -q --detach main 2>/dev/null \
-      || echo "land: main moved, but this checkout stays at $(git rev-parse --short HEAD) (local changes); git switch --detach main when clean" >&2
-  fi
-}
-
-# sync_main: fetch origin/main and fast-forward main to it; exits 8 or 9.
+# Bring main (checked out here) up to origin/main. Ahead is fine; diverged is 8.
 sync_main() {
-  local om old
+  local om cur
   if ! fetch_origin; then
     echo "land: origin unreachable; main stays at $(git rev-parse --short main), nothing landed" >&2
     exit 9
   fi
   om="$(git rev-parse refs/remotes/origin/main)"
-  old="$(git rev-parse main)"
-  [[ "$om" == "$old" ]] && return 0
-  if git merge-base --is-ancestor "$old" "$om"; then
-    git fetch -q . "refs/remotes/origin/main:refs/heads/main" \
-      || { echo "land: git refused to fast-forward main to origin/main" >&2; exit 1; }
-    follow_home "$old"
+  cur="$(git rev-parse main)"
+  [[ "$om" == "$cur" ]] && return 0
+  if git merge-base --is-ancestor "$cur" "$om"; then
+    if [[ "$(git branch --show-current)" == main ]]; then git merge -q --ff-only "$om"; else git fetch -q . "$om:refs/heads/main"; fi \
+      || { echo "land: git refused to fast-forward main to origin/main (local changes in the way?)" >&2; exit 1; }
     echo "land: main fast-forwarded to origin/main $(git rev-parse --short main)" >&2
     return 0
   fi
-  echo "land: main has $(git rev-list --count "$om..$old") commit(s) origin/main lacks ($(git log --format=%h "$om..$old" | tr '\n' ' ')); nothing lands until they are on origin: push them (git push origin main:main) or reset main to origin/main by hand, then run this again" >&2
+  if git merge-base --is-ancestor "$om" "$cur"; then
+    echo "land: main is $(git rev-list --count "$om..$cur") commit(s) ahead of origin/main; they are pushed with the next landing" >&2
+    return 0
+  fi
+  echo "land: main and origin/main have diverged ($(git rev-parse --short main) vs $(git rev-parse --short "$om")); nothing moved" >&2
   exit 8
 }
 
-# undo_land <before> <after>: put main back on the origin tip it left.
-undo_land() {
-  if ! git update-ref refs/heads/main "$1" "$2" 2>/dev/null; then
-    echo "land: main moved on here before the push and stays ahead of origin/main; push it (git push origin main:main) by hand, then run this again" >&2
-    exit 8
-  fi
-}
+# $1: main's tip before the landing, or empty for HEAD (nothing to take back).
+take_back() { [[ -z "$1" ]] || git reset -q --keep "$1" || echo "land: could not take the landing back; main is at $(git rev-parse --short main)" >&2; }
 
-# push_main <before> <after>: publish main; on rejection or lasting failure
-# undo the land and exit 4 or 9.
 push_main() {
-  local delay
+  local old="$1" delay
   for delay in "${BACKOFF[@]}" ""; do
-    git push -q origin "refs/heads/main:refs/heads/main" && return 0
+    git push -q origin "refs/heads/main:refs/heads/main" 2>/dev/null && return 0
     if fetch_once; then
-      # Already there (the other loop on this Mac pushed main with it): done.
       git merge-base --is-ancestor main refs/remotes/origin/main && return 0
       if ! git merge-base --is-ancestor refs/remotes/origin/main main; then
-        undo_land "$1" "$2"
+        if [[ -z "$old" ]]; then
+          echo "land: origin/main moved; main and origin/main have diverged, nothing pushed" >&2
+          exit 8
+        fi
+        take_back "$old"
         sync_main
-        echo "land: origin/main moved (someone else landed first); main is back at origin/main $(git rev-parse --short main), nothing pushed; rebase onto main, re-run its checks, then land again" >&2
+        echo "land: origin/main moved (someone landed first); main is at $(git rev-parse --short main), nothing pushed; rebase onto main, re-run the gate, then land again" >&2
         exit 4
       fi
     fi
@@ -126,247 +119,174 @@ push_main() {
     echo "land: pushing main to origin failed; retrying in ${delay}s" >&2
     sleep "$delay"
   done
-  undo_land "$1" "$2"
-  echo "land: could not push main to origin; main is back at $(git rev-parse --short main), nothing landed" >&2
+  take_back "$old"
+  echo "land: could not push main to origin; main is at $(git rev-parse --short main), nothing published" >&2
   exit 9
-}
-
-sync_only() {
-  check_holder
-  if ! use_origin; then
-    echo "land: no origin to sync with (or LAND_NO_PUSH=1); main stays at $(git rev-parse --short main)"
-    return 0
-  fi
-  sync_main
-  echo "land: main = origin/main $(git rev-parse --short main)"
 }
 
 main() {
   case "${1:-}" in
     --self-test) self_test; return ;;
-    --sync) [[ $# -eq 1 ]] || usage; sync_only; return ;;
+    --sync)
+      [[ $# -eq 1 ]] || usage
+      check_holder
+      if use_origin; then sync_main; fi
+      echo "land: main $(git rev-parse --short main)"
+      return ;;
   esac
-  [[ $# -eq 1 ]] || usage
-  local branch="$1" tip old head src follow=0 push=0 rc
-  if [[ "$branch" == HEAD ]]; then src=HEAD; else src="refs/heads/$branch"; fi
-  git rev-parse -q --verify "$src^{commit}" >/dev/null \
-    || { echo "land: no branch '$branch'" >&2; exit 1; }
-
+  [[ $# -eq 1 && "$1" != -* ]] || usage
+  local branch="$1" src="" old=""
   check_holder
-  if use_origin; then push=1; sync_main; fi
-  if ! git merge-base --is-ancestor main "$src"; then
-    echo "land: $branch does not contain main; rebase it onto main, re-run its checks, then land again" >&2
-    exit 4
+  if [[ "$branch" == HEAD ]]; then
+    [[ "$(git branch --show-current)" == main ]] \
+      || { echo "land: HEAD lands a commit made on main; this checkout is not on main" >&2; exit 1; }
+  else
+    src="refs/heads/$branch"
+    git rev-parse -q --verify "$src^{commit}" >/dev/null || { echo "land: no branch '$branch'" >&2; exit 1; }
+    on_main
   fi
-
-  old="$(git rev-parse main)"
-  head="$(git rev-parse HEAD)"
-  if [[ "$(git branch --show-current)" == "$branch" ]] \
-     || { [[ -z "$(git branch --show-current)" ]] && [[ "$head" == "$old" ]]; }; then
-    follow=1
-  fi
-  if ! git fetch -q . "$src:refs/heads/main"; then
-    # The other loop landed between the check and the update: same as main moved.
+  if use_origin; then sync_main; fi
+  if [[ -n "$src" ]]; then
     if ! git merge-base --is-ancestor main "$src"; then
-      echo "land: main moved while landing $branch; rebase it onto main, re-run its checks, then land again" >&2
+      echo "land: $branch does not contain main; rebase it onto main, re-run the gate, then land again" >&2
       exit 4
     fi
-    echo "land: git refused to fast-forward main to $branch" >&2
-    exit 1
+    old="$(git rev-parse main)"
+    git merge -q --ff-only "$src" \
+      || { echo "land: git refused to fast-forward main to $branch (local changes in the way?)" >&2; exit 1; }
   fi
-  if (( push )); then
-    push_main "$old" "$(git rev-parse main)"
+  if use_origin; then
+    push_main "$old"
     echo "land: pushed main to origin" >&2
   fi
-  tip="$(git rev-parse --short main)"
-  if (( follow )); then
-    # main has moved already, so a checkout that can't follow (local edits in
-    # files the land changed) is reported, not treated as a failed land.
-    git switch -q --detach main 2>/dev/null \
-      || echo "land: landed, but this checkout stays at $(git rev-parse --short HEAD) (local changes); git switch --detach main when clean" >&2
-  fi
-  echo "land: $branch -> main $tip"
+  echo "land: $branch -> main $(git rev-parse --short main)"
 }
 
 self_test() {
-  local tmp repo pass=0 rc self
+  local tmp pass=0 total=0 rc self realgit
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  realgit="$(command -v git)"
   tmp="$(mktemp -d)"
-  repo="$tmp/repo"
-  g() { git -C "$repo" -c user.email=t@t -c user.name=t "$@"; }
-  git init -q -b main "$repo"
-  g commit -q --allow-empty -m base
-  g switch -q -c feat/HE-1-a && g commit -q --allow-empty -m a1
-  run() { (cd "$repo" && bash "$self" "$@") >/dev/null 2>&1; }
-
-  # main checked out (here): refused, main unchanged
-  g switch -q main
-  run feat/HE-1-a && rc=0 || rc=$?
-  [[ $rc == 3 && "$(g rev-parse main)" != "$(g rev-parse feat/HE-1-a)" ]] && pass=$((pass+1)) || echo "FAIL held"
-
-  # main checked out in another worktree: refused too
-  g switch -q --detach main
-  g worktree add -q "$tmp/other" main
-  run feat/HE-1-a && rc=0 || rc=$?
-  [[ $rc == 3 ]] && pass=$((pass+1)) || echo "FAIL held elsewhere"
-  g worktree remove "$tmp/other"
-
-  # on the branch, nobody holds main: lands, leaves the checkout detached at main
-  g switch -q feat/HE-1-a
-  run feat/HE-1-a && rc=0 || rc=$?
-  [[ $rc == 0 && "$(g rev-parse main)" == "$(g rev-parse feat/HE-1-a)" \
-     && -z "$(g branch --show-current)" && "$(g rev-parse HEAD)" == "$(g rev-parse main)" ]] \
-    && pass=$((pass+1)) || echo "FAIL land"
-
-  # main moved past the branch's base: exit 4, main unchanged
-  g switch -q -c feat/HE-2-b "$(g rev-list --max-parents=0 main)"
-  g commit -q --allow-empty -m b1
-  local before; before="$(g rev-parse main)"
-  run feat/HE-2-b && rc=0 || rc=$?
-  [[ $rc == 4 && "$(g rev-parse main)" == "$before" ]] && pass=$((pass+1)) || echo "FAIL moved"
-
-  # detached at main (a loop's home): lands, and HEAD follows main
-  g rebase -q main feat/HE-2-b
-  g switch -q --detach main
-  run feat/HE-2-b && rc=0 || rc=$?
-  [[ $rc == 0 && "$(g rev-parse main)" == "$(g rev-parse feat/HE-2-b)" && "$(g rev-parse HEAD)" == "$(g rev-parse main)" ]] \
-    && pass=$((pass+1)) || echo "FAIL detached home"
-
-  # detached anywhere else: lands, HEAD stays put
-  g switch -q -c feat/HE-3-c main && g commit -q --allow-empty -m c1
-  g switch -q --detach main~1
-  local head; head="$(g rev-parse HEAD)"
-  run feat/HE-3-c && rc=0 || rc=$?
-  [[ $rc == 0 && "$(g rev-parse main)" == "$(g rev-parse feat/HE-3-c)" && "$(g rev-parse HEAD)" == "$head" ]] \
-    && pass=$((pass+1)) || echo "FAIL detached elsewhere"
-
-  # a commit on the detached home lands with HEAD
-  g switch -q --detach main && g commit -q --allow-empty -m rebaseline
-  run HEAD && rc=0 || rc=$?
-  [[ $rc == 0 && "$(g rev-parse main)" == "$(g rev-parse HEAD)" && -z "$(g branch --show-current)" ]] \
-    && pass=$((pass+1)) || echo "FAIL head"
-
-  # lost race: the other loop lands between the check and the update -> exit 4, main is theirs
-  g switch -q -c feat/HE-4-d main && g commit -q --allow-empty -m d1
-  g switch -q --detach main
-  local rival; rival="$(g commit-tree -p main -m rival "$(g rev-parse 'main^{tree}')")"
-  mkdir -p "$tmp/bin"
-  local realgit; realgit="$(command -v git)"
-  printf '#!/usr/bin/env bash\nif [[ "$1" == fetch ]]; then "%s" update-ref refs/heads/main %s; fi\nexec "%s" "$@"\n' \
-    "$realgit" "$rival" "$realgit" > "$tmp/bin/git"
-  chmod +x "$tmp/bin/git"
-  (cd "$repo" && PATH="$tmp/bin:$PATH" bash "$self" feat/HE-4-d) >/dev/null 2>&1 && rc=0 || rc=$?
-  [[ $rc == 4 && "$(g rev-parse main)" == "$rival" ]] && pass=$((pass+1)) || echo "FAIL race"
-
-  # dirty home that can't follow: still exit 0, main moved, HEAD stays
-  g switch -q --detach main
-  printf a > "$repo/f" && g add f && g commit -q -m f1
-  g branch -q -f main HEAD
-  g switch -q -c feat/HE-5-e && printf b > "$repo/f" && g commit -q -am f2
-  g switch -q --detach main
-  local home; home="$(g rev-parse HEAD)"
-  printf dirty > "$repo/f"
-  run feat/HE-5-e && rc=0 || rc=$?
-  [[ $rc == 0 && "$(g rev-parse main)" == "$(g rev-parse feat/HE-5-e)" && "$(g rev-parse HEAD)" == "$home" ]] \
-    && pass=$((pass+1)) || echo "FAIL dirty home"
-  g checkout -q -- f
-
-  # no such branch: exit 1
-  run feat/HE-9-none && rc=0 || rc=$?
-  [[ $rc == 1 ]] && pass=$((pass+1)) || echo "FAIL missing"
-
-  # --sync without origin: nothing to do, exit 0
-  run --sync && rc=0 || rc=$?
-  [[ $rc == 0 ]] && pass=$((pass+1)) || echo "FAIL sync local"
-
-  # Two Macs: a bare origin and clones a and b, each detached at main.
   local origin="$tmp/origin.git" a="$tmp/a" b="$tmp/b"
-  git init -q --bare -b main "$origin"
-  git clone -q "$repo" "$a" 2>/dev/null
-  git -C "$a" remote set-url origin "$origin"
+  ok() { total=$((total+1)); if "$@"; then pass=$((pass+1)); else echo "FAIL $CASE"; fi; }
   ga() { git -C "$a" -c user.email=t@t -c user.name=t "$@"; }
   gb() { git -C "$b" -c user.email=t@t -c user.name=t "$@"; }
   gor() { git -C "$origin" "$@"; }
-  ga push -q origin "$(g rev-parse main):refs/heads/main"
-  ga fetch -q origin && ga switch -q --detach origin/main && ga branch -q -f main origin/main
-  git clone -q "$origin" "$b" 2>/dev/null && gb switch -q --detach main
   runin() { local d="$1"; shift; (cd "$d" && LAND_BACKOFF="0 0 0 0" bash "$self" "$@") >/dev/null 2>&1; }
+  eq() { [[ "$1" == "$2" ]]; }
 
-  # a lands a branch: main moves here and on origin, the checkout follows
-  ga switch -q -c feat/HE-20-p main && ga commit -q --allow-empty -m p1
-  runin "$a" feat/HE-20-p && rc=0 || rc=$?
-  [[ $rc == 0 && "$(gor rev-parse main)" == "$(ga rev-parse feat/HE-20-p)" \
-     && "$(ga rev-parse main)" == "$(ga rev-parse feat/HE-20-p)" && "$(ga rev-parse HEAD)" == "$(ga rev-parse main)" ]] \
-    && pass=$((pass+1)) || echo "FAIL push lands"
+  git init -q --bare -b main "$origin"
+  git init -q -b main "$a"
+  ga commit -q --allow-empty -m base
+  ga remote add origin "$origin" && ga push -q origin main
+  git clone -q "$origin" "$b" 2>/dev/null
 
-  # b, behind origin, lands a branch from its old main: main fast-forwards to
-  # origin/main (the home with it), the branch lacks it: exit 4, nothing pushed
-  gb switch -q -c feat/HE-21-q main && gb commit -q --allow-empty -m q1
-  local otip; otip="$(gor rev-parse main)"
-  runin "$b" feat/HE-21-q && rc=0 || rc=$?
-  [[ $rc == 4 && "$(gor rev-parse main)" == "$otip" && "$(gb rev-parse main)" == "$otip" ]] \
-    && pass=$((pass+1)) || echo "FAIL origin moved before"
+  CASE="lands a branch from main, pushes, deletable"
+  ga switch -q -c feat/HE-1-a && ga commit -q --allow-empty -m a1 && ga switch -q main
+  runin "$a" feat/HE-1-a && rc=0 || rc=$?
+  ok eq "$rc|$(ga rev-parse main)|$(gor rev-parse main)|$(ga branch --show-current)" "0|$(ga rev-parse feat/HE-1-a)|$(ga rev-parse feat/HE-1-a)|main"
 
-  # --sync: a's home behind origin follows main to origin/main
-  gb rebase -q main feat/HE-21-q
-  runin "$b" feat/HE-21-q && rc=0 || rc=$?
-  [[ $rc == 0 && "$(gor rev-parse main)" == "$(gb rev-parse feat/HE-21-q)" ]] && pass=$((pass+1)) || echo "FAIL rebased lands"
+  CASE="lands from the branch itself, ends on main"
+  ga switch -q -c feat/HE-2-b && ga commit -q --allow-empty -m b1
+  runin "$a" feat/HE-2-b && rc=0 || rc=$?
+  ok eq "$rc|$(gor rev-parse main)|$(ga branch --show-current)" "0|$(ga rev-parse feat/HE-2-b)|main"
+
+  CASE="missing branch"
+  runin "$a" feat/HE-9-none && rc=0 || rc=$?
+  ok eq "$rc" 1
+
+  CASE="usage"
+  runin "$a" --bogus && rc=0 || rc=$?
+  ok eq "$rc" 64
+
+  CASE="branch behind origin: main follows origin, exit 4"
+  gb switch -q -c feat/HE-3-c && gb commit -q --allow-empty -m c1 && gb switch -q main
+  runin "$b" feat/HE-3-c && rc=0 || rc=$?
+  ok eq "$rc|$(gb rev-parse main)" "4|$(gor rev-parse main)"
+
+  CASE="rebased branch lands"
+  gb rebase -q main feat/HE-3-c && gb switch -q main
+  runin "$b" feat/HE-3-c && rc=0 || rc=$?
+  ok eq "$rc|$(gor rev-parse main)" "0|$(gb rev-parse feat/HE-3-c)"
+
+  CASE="--sync fast-forwards main"
   runin "$a" --sync && rc=0 || rc=$?
-  [[ $rc == 0 && "$(ga rev-parse main)" == "$(gor rev-parse main)" && "$(ga rev-parse HEAD)" == "$(ga rev-parse main)" ]] \
-    && pass=$((pass+1)) || echo "FAIL sync"
+  ok eq "$rc|$(ga rev-parse main)" "0|$(gor rev-parse main)"
 
-  # lost race on origin: the other Mac pushes between a's fetch and push ->
-  # exit 4, origin keeps theirs, a's main is at their tip, a stays on its branch
-  ga switch -q -c feat/HE-22-r main && ga commit -q --allow-empty -m r1
-  local rival2
-  rival2="$(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+  CASE="--sync from a ticket branch moves main, stays on the branch"
+  gb switch -q main && gb commit -q --allow-empty -m s1 && gb push -q origin main
+  ga switch -q -c feat/HE-7-g
+  runin "$a" --sync && rc=0 || rc=$?
+  ok eq "$rc|$(ga rev-parse main)|$(ga branch --show-current)" "0|$(gor rev-parse main)|feat/HE-7-g"
+  ga switch -q main && ga branch -q -D feat/HE-7-g
+
+  CASE="HEAD pushes a commit made on main"
+  ga commit -q --allow-empty -m retro
+  runin "$a" HEAD && rc=0 || rc=$?
+  ok eq "$rc|$(gor rev-parse main)" "0|$(ga rev-parse main)"
+
+  CASE="HEAD off main is refused"
+  ga switch -q -c feat/HE-4-d && ga commit -q --allow-empty -m d1
+  runin "$a" HEAD && rc=0 || rc=$?
+  ok eq "$rc" 1
+
+  CASE="main ahead by hand is pushed with the landing"
+  ga switch -q main && ga commit -q --allow-empty -m byhand && ga rebase -q main feat/HE-4-d && ga switch -q main
+  runin "$a" feat/HE-4-d && rc=0 || rc=$?
+  ok eq "$rc|$(gor rev-parse main)" "0|$(ga rev-parse feat/HE-4-d)"
+
+  CASE="main held by another worktree: exit 3, nothing moves"
+  ga switch -q -c feat/HE-5-e && ga commit -q --allow-empty -m e1
+  ga worktree add -q "$tmp/other" main
+  local before; before="$(ga rev-parse main)"
+  runin "$a" feat/HE-5-e && rc=0 || rc=$?
+  ok eq "$rc|$(ga rev-parse main)" "3|$before"
+  ga worktree remove "$tmp/other"
+
+  CASE="diverged: exit 8"
+  gb switch -q main && gb commit -q --allow-empty -m rogue
+  runin "$b" --sync && rc=0 || rc=$?
+  ok eq "$rc" 8
+  gb reset -q --hard origin/main
+
+  mkdir -p "$tmp/bin"
+  CASE="push race: landing taken back, main at the rival, exit 4"
+  local rival otip
+  rival="$(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
     gor commit-tree -p main -m rival "$(gor rev-parse 'main^{tree}')")"
   printf '#!/usr/bin/env bash\nif [[ "$1" == push && ! -e "%s/raced" ]]; then touch "%s/raced"; "%s" -C "%s" update-ref refs/heads/main %s; fi\nexec "%s" "$@"\n' \
-    "$tmp" "$tmp" "$realgit" "$origin" "$rival2" "$realgit" > "$tmp/bin/git"
-  (cd "$a" && PATH="$tmp/bin:$PATH" LAND_BACKOFF="0 0 0 0" bash "$self" feat/HE-22-r) >/dev/null 2>&1 && rc=0 || rc=$?
-  [[ $rc == 4 && "$(gor rev-parse main)" == "$rival2" && "$(ga rev-parse main)" == "$rival2" \
-     && "$(ga branch --show-current)" == feat/HE-22-r ]] && pass=$((pass+1)) || echo "FAIL push race"
+    "$tmp" "$tmp" "$realgit" "$origin" "$rival" "$realgit" > "$tmp/bin/git"
+  chmod +x "$tmp/bin/git"
+  (cd "$a" && PATH="$tmp/bin:$PATH" LAND_BACKOFF="0 0 0 0" bash "$self" feat/HE-5-e) >/dev/null 2>&1 && rc=0 || rc=$?
+  ok eq "$rc|$(ga rev-parse main)|$(gor rev-parse main)" "4|$rival|$rival"
 
-  # main ahead of origin (a commit on main nobody pushed): refused, exit 8
-  ga switch -q --detach main && ga commit -q --allow-empty -m byhand && ga branch -q -f main HEAD
-  local byhand; byhand="$(ga rev-parse main)"
-  ga rebase -q main feat/HE-22-r
-  otip="$(gor rev-parse main)"
-  runin "$a" feat/HE-22-r && rc=0 || rc=$?
-  [[ $rc == 8 && "$(gor rev-parse main)" == "$otip" && "$(ga rev-parse main)" == "$byhand" ]] \
-    && pass=$((pass+1)) || echo "FAIL ahead"
-  ga branch -q -f main origin/main && ga rebase -q --onto main "$byhand" feat/HE-22-r
-  ga switch -q --detach main
-
-  # network: fetch fails twice, then works -> lands and pushes (3 fetches of origin)
-  printf '#!/usr/bin/env bash\nif [[ "$1" == fetch && " $* " == *" origin "* ]]; then n=$(( $(cat "%s/n" 2>/dev/null || echo 0) + 1 )); echo $n > "%s/n"; if (( n <= ${STUB_FAILS:-0} )); then echo "fatal: unable to access origin" >&2; exit 128; fi; fi\nif [[ "$1" == push && -n "${STUB_PUSH_DOWN:-}" ]]; then echo "fatal: unable to access origin" >&2; exit 128; fi\nexec "%s" "$@"\n' \
+  printf '#!/usr/bin/env bash\nif [[ "$1" == fetch && " $* " == *" origin "* ]]; then n=$(( $(cat "%s/n" 2>/dev/null || echo 0) + 1 )); echo $n > "%s/n"; if (( n <= ${STUB_FAILS:-0} )); then exit 128; fi; fi\nif [[ "$1" == push && -n "${STUB_PUSH_DOWN:-}" ]]; then exit 128; fi\nexec "%s" "$@"\n' \
     "$tmp" "$tmp" "$realgit" > "$tmp/bin/git"
-  rm -f "$tmp/n"
-  (cd "$a" && PATH="$tmp/bin:$PATH" STUB_FAILS=2 LAND_BACKOFF="0 0 0 0" bash "$self" feat/HE-22-r) >/dev/null 2>&1 && rc=0 || rc=$?
-  [[ $rc == 0 && "$(cat "$tmp/n")" == 3 && "$(gor rev-parse main)" == "$(ga rev-parse feat/HE-22-r)" ]] \
-    && pass=$((pass+1)) || echo "FAIL fetch retry"
+  ga rebase -q main feat/HE-5-e && ga switch -q main
 
-  # network down: every fetch fails -> exit 9, main and origin unchanged
-  ga switch -q -c feat/HE-23-s main && ga commit -q --allow-empty -m s1
+  CASE="fetch fails twice, then lands"
+  rm -f "$tmp/n"
+  (cd "$a" && PATH="$tmp/bin:$PATH" STUB_FAILS=2 LAND_BACKOFF="0 0 0 0" bash "$self" feat/HE-5-e) >/dev/null 2>&1 && rc=0 || rc=$?
+  ok eq "$rc|$(cat "$tmp/n")|$(gor rev-parse main)" "0|3|$(ga rev-parse feat/HE-5-e)"
+
+  CASE="origin down: exit 9, nothing moves"
+  ga switch -q -c feat/HE-6-f && ga commit -q --allow-empty -m f1 && ga switch -q main
   otip="$(gor rev-parse main)"; rm -f "$tmp/n"
-  (cd "$a" && PATH="$tmp/bin:$PATH" STUB_FAILS=99 LAND_BACKOFF="0 0 0 0" bash "$self" feat/HE-23-s) >/dev/null 2>&1 && rc=0 || rc=$?
-  [[ $rc == 9 && "$(cat "$tmp/n")" == 5 && "$(ga rev-parse main)" == "$otip" && "$(gor rev-parse main)" == "$otip" ]] \
-    && pass=$((pass+1)) || echo "FAIL fetch down"
+  (cd "$a" && PATH="$tmp/bin:$PATH" STUB_FAILS=99 LAND_BACKOFF="0 0 0 0" bash "$self" feat/HE-6-f) >/dev/null 2>&1 && rc=0 || rc=$?
+  ok eq "$rc|$(ga rev-parse main)|$(gor rev-parse main)" "9|$otip|$otip"
 
-  # push keeps failing after the local fast-forward -> exit 9, main back at origin/main
+  CASE="push down: landing taken back, exit 9"
   rm -f "$tmp/n"
-  (cd "$a" && PATH="$tmp/bin:$PATH" STUB_PUSH_DOWN=1 LAND_BACKOFF="0 0 0 0" bash "$self" feat/HE-23-s) >/dev/null 2>&1 && rc=0 || rc=$?
-  [[ $rc == 9 && "$(ga rev-parse main)" == "$otip" && "$(gor rev-parse main)" == "$otip" \
-     && "$(ga branch --show-current)" == feat/HE-23-s ]] && pass=$((pass+1)) || echo "FAIL push down"
+  (cd "$a" && PATH="$tmp/bin:$PATH" STUB_PUSH_DOWN=1 LAND_BACKOFF="0 0 0 0" bash "$self" feat/HE-6-f) >/dev/null 2>&1 && rc=0 || rc=$?
+  ok eq "$rc|$(ga rev-parse main)|$(gor rev-parse main)" "9|$otip|$otip"
 
-  # LAND_NO_PUSH=1: lands locally only
-  (cd "$a" && LAND_NO_PUSH=1 bash "$self" feat/HE-23-s) >/dev/null 2>&1 && rc=0 || rc=$?
-  [[ $rc == 0 && "$(ga rev-parse main)" == "$(ga rev-parse feat/HE-23-s)" && "$(gor rev-parse main)" == "$otip" ]] \
-    && pass=$((pass+1)) || echo "FAIL no push"
+  CASE="LAND_NO_PUSH lands locally only"
+  (cd "$a" && LAND_NO_PUSH=1 bash "$self" feat/HE-6-f) >/dev/null 2>&1 && rc=0 || rc=$?
+  ok eq "$rc|$(ga rev-parse main)|$(gor rev-parse main)" "0|$(ga rev-parse feat/HE-6-f)|$otip"
 
   rm -rf "$tmp"
-  echo "land self-test: $pass/21 passed"
-  [[ $pass == 21 ]]
+  echo "land self-test: $pass/$total passed"
+  [[ $pass == "$total" ]]
 }
 
 main "$@"

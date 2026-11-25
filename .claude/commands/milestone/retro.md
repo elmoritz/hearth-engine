@@ -19,7 +19,7 @@ The user's input: $ARGUMENTS
 
 ## Step 0: preflight
 
-1. **Home.** The checkout is detached at `main` with a clean tree. Changes are committed here and landed with `scripts/land.sh HEAD`.
+1. **Home.** The checkout is on `main` with a clean tree. Changes are committed here and landed with `scripts/land.sh HEAD`.
 2. **A loop in flight.** If a `run.log` in any checkout (`git worktree list`) has a `loop start` with no `loop end` after it and a line from the last 30 minutes, say so and continue as `--report-only`: applying changes would edit files that loop is following.
 3. **An earlier report.** If `docs/retros/<M>.md` exists with an empty *Decisions* table, a `--report-only` run wrote it: re-run Step 1, then skip to Step 5.
 
