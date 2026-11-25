@@ -23,8 +23,9 @@ lifecycle handling. Out: text (the host draws it in SwiftUI), physics, audio, 3D
 
 ## Platform
 
-iOS and iPadOS 26.4+, every device iOS 27 supports (GPU feature floor: Apple5, the A12Z iPad Pro). Metal 3-era API;
-no Metal 4 (the floor devices lack it). Swift 6 strict concurrency, no dependencies.
+iOS and iPadOS 26.4+, every device iOS 27 supports (GPU feature floor: Apple5, the A12Z iPad Pro). Metal 3-era API
+behind a small GPU protocol; Metal 4 brings no gain at this scale and the floor devices lack it (Decisions D4,
+with its revisit triggers). Swift 6 strict concurrency, no dependencies.
 
 ## Docs
 

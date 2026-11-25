@@ -15,8 +15,23 @@ devices: iPad (9th gen) as the performance and battery floor, iPhone SE (2nd gen
 on demand when nothing on screen changes, and lower the rate while only slow ambience moves. Proposed policy in
 `research/performance-and-power.md` section 2; tests E-RATE-1..4.
 
-**D4. Metal API level (follows from D2).** The device floor has no Metal 4 (needs Apple7), so the engine uses the
-Metal 3-era API and Apple5 features only, behind a small GPU protocol so a Metal 4 path can come later.
+**D4. Metal API level (owner, 2026-11-25: "stay up to date, but if there is no improvement, stick with Metal 3").**
+The engine uses the Metal 3-era API and Apple5 features only, behind one small internal GPU protocol so a Metal 4
+back end can be added without touching the rest. Why Metal 4 brings no improvement here:
+- Its gains are lower CPU encode overhead (command allocators, argument tables, residency sets, explicit barriers)
+  and faster, controllable pipeline compilation (`MTL4Compiler`, flexible pipelines). This engine plans 8 or fewer
+  draws per frame (E-BATCH-1) with a CPU encode budget of 2 ms or less (D-GPU-1), and fewer than 10 pipelines, all
+  built asynchronously at launch within 50 ms (E-PSO-3). There is nothing measurable to win, and in exchange
+  resource lifetimes and synchronisation become manual.
+- WWDC26's Metal additions (ML and tensors, MetalFX) do not apply to a 2D sprite renderer.
+- Metal 4 needs Apple7 (A14/M1). The D2 floor (iPhone 11 family, SE 2nd gen, iPad 9th gen, A12Z iPad Pros) cannot
+  run it, so adopting it means dropping those devices or maintaining two back ends and two GPU test surfaces.
+- The Metal 3 API is not deprecated; Apple designed Metal 4 to coexist with it.
+
+Staying current: OS features that are not Metal 4-only (for example iOS 27's `MetalFrameRateMetric` and
+`StateReporting`) are adopted as they come. Revisit Metal 4 when (a) every supported device is Apple7 or later
+(the iOS release that drops the A13 and A12Z), or (b) device measurement shows CPU encode or pipeline compilation
+is a real cost.
 
 **D5. Repos (owner, 2026-11-25).** The engine lives in this repo (`hearth-engine`), game-agnostic. IdleVillage
 keeps the adapter (manifests to engine calls, `GameState` to frame description, hit testing, SwiftUI bridge) and
