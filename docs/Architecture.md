@@ -77,8 +77,14 @@ Inside `HearthHarness`:
 - `EngineError`: `noDevice`, `missingTexture`, `malformedAssetHeader`, `unsupportedFormat`, `invalidTargetSize`,
   `invalidQuad`, `gpuFailure`. Every throwing function is `throws(EngineError)`.
 
-`HearthHarness`: `HarnessGPU`, `Receipt`, `NearExact`, `FLIP`, `GoldenCheck`, `GoldenTier`, `PNGEncoder`,
-`SyntheticCorpus`, `CorpusProjection`, `CorpusEntry`, `HarnessScene`, `SplitMix64`.
+`HearthHarness`:
+
+- `HarnessGPU` and its `Availability` (`current` is this process's probe); `Receipt`.
+- Golden comparison: `GoldenCheck` with `GoldenTier`, `GoldenOutcome` and `GoldenError` (`sizeMismatch`,
+  `artifactWriteFailed`, `invalidPixelsPerDegree`); `NearExact` with `NearExactTolerance` and `NearExactResult`;
+  `FLIP` with `FLIPThreshold` and `FLIPResult`, for viewing conditions of 1 to 1024 pixels per degree;
+  `PNGEncoder`.
+- `SyntheticCorpus`, `CorpusProjection`, `CorpusEntry`, `HarnessScene`, `SplitMix64`, `PixelImage.sha256`.
 
 ## Extension points
 
