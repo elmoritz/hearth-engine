@@ -249,6 +249,19 @@ import Testing
                 }
             }
         }
+        // The point detector is the second derivative of a Gaussian of deviation 0.5 * 0.082 * ppd: negative inside
+        // one deviation, positive outside, and in the analytic ratio to its centre.
+        let point = FLIP.featureDetectors(FLIP.referencePixelsPerDegree)
+        let deviation = 0.5 * 0.082 * FLIP.referencePixelsPerDegree
+        let pointSide = 2 * point.radius + 1, centre = point.radius * pointSide + point.radius
+        #expect(deviation > 2 && deviation < 3)
+        #expect(point.point.x[centre] < 0 && point.point.x[centre + 2] < 0 && point.point.x[centre - 2] < 0)
+        #expect(point.point.x[centre + 3] > 0 && point.point.x[centre - 3] > 0)
+        #expect(point.point.y[centre + 2 * pointSide] < 0 && point.point.y[centre + 3 * pointSide] > 0)
+        let ratio = (1 - 1 / (deviation * deviation)) * exp(-1 / (2 * deviation * deviation))
+        #expect(abs(point.point.x[centre + 1] / point.point.x[centre] - ratio) < 1e-12)
+        // The edge detector is its first derivative: zero at the centre, antisymmetric, positive weights on the left.
+        #expect(point.edge.x[centre] == 0 && point.edge.x[centre - 1] > 0 && point.edge.x[centre + 1] == -point.edge.x[centre - 1])
         // sRGB decoding, the matrix and its inverse, and CIELAB at its anchors.
         #expect(FLIP.linearFromSRGB[0] == 0 && FLIP.linearFromSRGB[255] == 1)
         #expect(abs(FLIP.linearFromSRGB[10] - 10.0 / 255 / 12.92) < 1e-15 && abs(FLIP.linearFromSRGB[128] - 0.2158605) < 1e-6)
