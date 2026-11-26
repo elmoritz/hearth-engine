@@ -184,6 +184,51 @@ with elevation. Pathfinding, simulation, lockstep networking, AI and audio are o
 | Minimap | ticket #16 |
 | Fog of war and shroud | ticket #17 |
 | Terrain transitions | ticket #18 |
+| Building-placement grid: one outline around a footprint of any shape | ticket #41 |
+| Placement cells coloured valid or blocked, following the pointer | ticket #42 |
+
+### 8.1 Building placement (added 2026-11-26)
+
+The StarCraft-style grid under a building ghost. Per-cell boxes need nothing new: a bordered cell texture as a
+per-tile overlay (E-TILE-4) on a retained layer (D16), with the tile under the pointer from the pick query (D17),
+cells lifted with their level (D13) and the ghost drawn with instance tint, alpha or the silhouette fill
+(E-BLEND-5, E-BLEND-7). Any footprint shape works because the overlay is per-cell data. Three gaps: no stroked
+shape in release builds (E-DBG-1 is compiled out), so a border scales with the camera; no single perimeter around
+a multi-tile footprint without a 16-case edge set chosen by the consumer; no per-tile colour, so each state is its
+own overlay texture, and a highlight on the ground layer dirties ground chunks on every pointer move.
+
+### 8.2 What an RTS changes, beyond the tickets above (added 2026-11-26)
+
+Own reasoning from the Decisions and the catalogue, not measured. Ordered by how expensive each is to retrofit.
+
+1. **Sort cost.** D14 caches the order and re-sorts only what moved (E-SORT-9). In an idle village almost nothing
+   moves; in an RTS everything does, so the screen-space bucketing D14 defers becomes the normal path.
+2. **Instance format.** D15 fixes it from day one with one reserved byte. Team colour needs a colour and a mask
+   slot per instance, placement cells a per-tile colour. Widening the format later touches every pipeline and
+   every golden image.
+3. **Frame description.** More than one tile layer per frame (placement highlights, fog of war) and more than one
+   view of a scene (minimap). Scene files are versioned (D18), but a first version with a list of layers is cheaper.
+4. **Ramps.** D13 gives flat terraces with cliff faces and defers per-corner heights. RTS maps need walkable ramps.
+5. **Frame rate and power.** Idle wants render on demand and low rates (D3); an RTS is continuous 60 Hz with
+   full-screen motion. The policy carries both; the budgets (D10) were framed around the idle case.
+6. **Texture memory.** 8 or 16 facings times several animations multiply sheet area. Mirroring halves it; the
+   64 MB resident target (D-MEM-1) and K textures per batch (D15) are the first limits hit.
+7. **Zoom range.** The visible-tile budget (E-LAYER-7) sets the minimum zoom. RTS players zoom further out than a
+   village view, which is where the deferred level of detail comes in.
+8. **Readability against mood.** Glow, soft light, the colour grade and scene fog carry the cozy look; an RTS needs
+   units readable at a glance, so effects need a ceiling or a per-band exemption, and glow per unit multiplies
+   overdraw on the fill-rate floor device.
+
+Outside the engine either way: a fixed-step simulation with interpolation (it fits an immutable frame description
+plus injected time), pathfinding, selection policy and touch controls.
+
+### 8.3 Closer second consumers: city builder, turn-based tactics (added 2026-11-26)
+
+Both sit next to IdleVillage and use what D12-D22 already provide. A city builder needs building placement (8.1),
+larger maps (D16), terrain transitions (#18) and many static buildings, which suits the cached sort. A tactics game
+needs tile highlights for movement and attack range (#42), a selection marker and bars (#15) and elevation that
+matters to the rules (D13), with few movers at a time. Neither needs the unit counts, continuous simulation or
+zoom range of points 1, 5 and 7. D24 records the scope that follows.
 
 ## 9. Deferred, with no ticket yet
 

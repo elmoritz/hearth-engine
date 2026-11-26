@@ -163,6 +163,29 @@ sessions have no GPU and can run only pure tests and the intended half of the re
 harness suite (report schema and determinism, intended against observed, receipts, negative controls); E-HAR-5
 gains the receipt rule; a new evidence kind for report-based tests.
 
+### D24: which games the engine is for
+
+**D24. Scope: tile and isometric games like the first consumer; an RTS is not a goal (owner, 2026-11-26).** v1
+serves IdleVillage. The generalisation of D12-D22, "any isometric or tile game", stands: a city builder, a farming
+game or a turn-based tactics game are the likely second consumers, and they need the same grid, elevation, sort,
+picking and layers. A real-time strategy game is not a goal and is not precluded. Why: there is no RTS consumer,
+so its features would be designed against an imagined game and tested only on synthetic scenes; its targets oppose
+the idle game's (hundreds of movers and continuous 60 Hz against render on demand, readability against mood); the
+renderer is the small part of an RTS (pathfinding, simulation, AI, netcode and controls are outside this engine);
+and the work is about a fifth milestone. The evidence is `research/isometric-landscape.md` section 8.
+Consequences:
+1. No RTS feature enters engine-01 to engine-04. Tickets #14 (team colours), #16 (minimap), #17 (fog of war) and
+   #18 (terrain transitions) stay in the inbox as a record until a concrete game needs them.
+2. Building placement is shared by city builders and tactics games: #15 (shapes in release builds), #41 (footprint
+   outline) and #42 (per-tile colour, highlight layer) are pulled forward when a game needs it, not before.
+3. Three protections are cheap now and a format break later, whatever the second game is. Each belongs to the
+   ticket that fixes the format: spare room in the instance format for a per-instance colour and a mask slot,
+   beyond D15's one reserved byte (#6); a list of tile layers and more than one view in the first scene-file
+   version (#21) and in the layer API (#25); the box sort measured with a few hundred movers, not only static
+   boxes, so D14's deferred bucketing is known to fit behind the same interface (#24).
+A feature added for a second consumer follows E-GRID-6's pattern: a scene that does not use it renders
+byte-identically and pays nothing.
+
 ## Open
 
 **D1. Where compositing happens (owner).** Recommendation: **linear light**. Sprites rendered with Blender's
