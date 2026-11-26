@@ -11,7 +11,13 @@
 # and delete the branch, or, when .build/tickets/HE-<N>-awaiting.md exists
 # (reference images without an approval record, device ids nobody has measured),
 # post that as `Awaiting owner` and leave the ticket in review. Run again on a
-# ticket already in review and it resumes after the landing.
+# ticket already in review and it resumes after the landing; run it on a ticket
+# already closed as shipped and it only logs.
+#
+# A scripts/tickets step that exits non-zero is judged by the ticket's state, not
+# its exit code: if the ticket is where the step was meant to leave it, the step
+# counts as done (logged `recovered <step> <exit>`); otherwise it runs once more,
+# and only a second failure exits 1.
 #
 # Exit codes:
 #   0   shipped
@@ -20,7 +26,8 @@
 #   4   the branch does not contain main: rebase per auto.md, then run again
 #   8   main and origin/main have diverged: log `halt main-diverged`, wrap up
 #   9   origin unreachable: log `halt origin-unreachable`, wrap up
-#   1   a scripts/tickets or git step failed; its output is above
+#   1   a scripts/tickets step failed twice and the ticket is not in its end state,
+#       or a git step failed; the output is above
 set -euo pipefail
 
 main() {
@@ -38,9 +45,27 @@ mkdir -p .build/auto-loop
 say() { echo "$(date -u +%FT%TZ) HE-$n $*" >> "$log"; }
 [[ -f "$review" ]] || { echo "loop-close: missing $review" >&2; exit 1; }
 
-state="$("$TICKETS" show "$n" | sed -n '2p')"
-if [[ "$state" != *"in-review"* ]]; then
-  "$TICKETS" section "$n" --heading "Agent review" --file "$review" --event "agent review"
+stage() { "$TICKETS" show "$n" | sed -n '2p'; }
+shipped() { local s; s="$(stage)"; [[ "$s" == *"stage done"* && "$s" == *"closed/completed"* ]]; }
+in_review() { [[ "$(stage)" == *"in-review"* ]]; }
+# step <name> <end-state check> <command...>: run, judge a failure by the end state, retry once
+step() {
+  local name="$1" done_when="$2" rc; shift 2
+  "$@" && return 0 || rc=$?
+  if "$done_when"; then say "recovered $name $rc"; echo "loop-close: $name exited $rc but the ticket is in its end state" >&2; return 0; fi
+  "$@" && { say "recovered $name $rc (retry)"; return 0; } || rc=$?
+  "$done_when" && { say "recovered $name $rc"; return 0; }
+  echo "loop-close: $name failed twice (exit $rc)" >&2; exit 1
+}
+never() { return 1; }
+
+if shipped; then
+  say "shipped $(git rev-parse --short main) (already closed)"
+  echo "loop-close: HE-$n already shipped"
+  exit 0
+fi
+if ! in_review; then
+  step "section agent-review" never "$TICKETS" section "$n" --heading "Agent review" --file "$review" --event "agent review"
   set +e
   "$LAND" "$branch"
   landed=$?
@@ -50,19 +75,19 @@ if [[ "$state" != *"in-review"* ]]; then
     3|4|8|9) echo "loop-close: land.sh exit $landed; nothing landed" >&2; exit "$landed" ;;
     *) echo "loop-close: landing $branch failed" >&2; exit 1 ;;
   esac
-  "$TICKETS" move "$n" in-review
+  step "move in-review" in_review "$TICKETS" move "$n" in-review
 fi
 
 if git show-ref --verify --quiet "refs/heads/$branch" && git merge-base --is-ancestor "$branch" main; then
   git branch -q -D "$branch"
 fi
 if [[ -f "$awaiting" ]]; then
-  "$TICKETS" section "$n" --heading "Awaiting owner" --file "$awaiting" --event "awaiting owner"
+  step "section awaiting-owner" never "$TICKETS" section "$n" --heading "Awaiting owner" --file "$awaiting" --event "awaiting owner"
   say "landed-unapproved $(git rev-parse --short main)"
   echo "loop-close: HE-$n landed, in review, awaiting the owner"
   exit 10
 fi
-"$TICKETS" close "$n" --as shipped
+step "close" shipped "$TICKETS" close "$n" --as shipped
 say "shipped $(git rev-parse --short main)"
 echo "loop-close: HE-$n shipped"
 }
@@ -81,9 +106,13 @@ self_test() {
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_DIR/calls"
 case "$1" in
-  show) echo "#$2 t"; echo "stage $(cat "$STUB_DIR/stage" 2>/dev/null || echo in-progress) · x" ;;
+  show) echo "#$2 t"; echo "stage $(cat "$STUB_DIR/stage" 2>/dev/null || echo in-progress) · x · $(cat "$STUB_DIR/state" 2>/dev/null || echo open)" ;;
   move) echo "$3" > "$STUB_DIR/stage" ;;
-  close) [[ -z "${STUB_CLOSE_FAILS:-}" ]] || exit 2 ;;
+  close) case "${STUB_CLOSE_FAILS:-}" in
+           after) echo done > "$STUB_DIR/stage"; echo closed/completed > "$STUB_DIR/state"; exit 2 ;;
+           always) exit 2 ;;
+           *) echo done > "$STUB_DIR/stage"; echo closed/completed > "$STUB_DIR/state" ;;
+         esac ;;
 esac
 T
   chmod +x "$tmp/tickets"
@@ -114,13 +143,28 @@ T
   run 8 feat/HE-8-b && rc=0 || rc=$?
   [[ $rc == 4 ]] && ! grep -q "^move" "$tmp/calls" && pass=$((pass+1)) || echo "FAIL main moved"
 
-  g rebase -q main feat/HE-8-b && g switch -q main
-  (cd "$tmp/repo" && STUB_CLOSE_FAILS=1 STUB_DIR="$tmp" LOOP_ROOT="$tmp/repo" LOOP_TICKETS="$tmp/tickets" LAND_NO_PUSH=1 bash "$self" 8 feat/HE-8-b) >/dev/null 2>&1 && rc=0 || rc=$?
-  [[ $rc != 0 && $rc != 10 && "$(cat "$tmp/stage")" == in-review ]] && pass=$((pass+1)) || echo "FAIL close failure"
+  g rebase -q main feat/HE-8-b && g switch -q main; : > "$tmp/calls"
+  (cd "$tmp/repo" && STUB_CLOSE_FAILS=always STUB_DIR="$tmp" LOOP_ROOT="$tmp/repo" LOOP_TICKETS="$tmp/tickets" LAND_NO_PUSH=1 bash "$self" 8 feat/HE-8-b) >/dev/null 2>&1 && rc=0 || rc=$?
+  [[ $rc == 1 && "$(cat "$tmp/stage")" == in-review && "$(grep -c '^close' "$tmp/calls")" == 2 ]] \
+    && ! grep -q "HE-8 shipped" "$tmp/repo/.build/auto-loop/run.log" \
+    && pass=$((pass+1)) || echo "FAIL close failing twice exits 1 after one retry"
+
+  : > "$tmp/calls"
+  (cd "$tmp/repo" && STUB_CLOSE_FAILS=after STUB_DIR="$tmp" LOOP_ROOT="$tmp/repo" LOOP_TICKETS="$tmp/tickets" LAND_NO_PUSH=1 bash "$self" 8 feat/HE-8-b) >/dev/null 2>&1 && rc=0 || rc=$?
+  [[ $rc == 0 && "$(grep -c '^close' "$tmp/calls")" == 1 ]] \
+    && grep -q "HE-8 recovered close 2" "$tmp/repo/.build/auto-loop/run.log" \
+    && grep -q "HE-8 shipped" "$tmp/repo/.build/auto-loop/run.log" \
+    && pass=$((pass+1)) || echo "FAIL close that fails after closing counts as shipped (the HE-9 422)"
+
+  : > "$tmp/calls"
+  run 8 feat/HE-8-b && rc=0 || rc=$?
+  [[ $rc == 0 && ! -s "$tmp/calls" || $rc == 0 && "$(grep -vc '^show' "$tmp/calls")" == 0 ]] \
+    && grep -q "HE-8 shipped .*(already closed)" "$tmp/repo/.build/auto-loop/run.log" \
+    && pass=$((pass+1)) || echo "FAIL a shipped ticket is not closed again"
 
   rm -rf "$tmp"
-  echo "loop-close self-test: $pass/5 passed"
-  [[ $pass == 5 ]]
+  echo "loop-close self-test: $pass/7 passed"
+  [[ $pass == 7 ]]
 }
 
 main "$@"

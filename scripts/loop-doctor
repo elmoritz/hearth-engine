@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Preflight for /ticket:auto: exercise the loop's plumbing before the first ticket, not an hour into it.
+
+  scripts/loop-doctor <milestone>     exit 0 when every check passes, else 1 naming each failed check
+  scripts/loop-doctor --self-test
+
+Checks, in order (all run; the report lists every failure):
+  toolchain     scripts/metal-toolchain: the Metal compiler is installed (run 2 halted on this inside the implementer)
+  loop-close    scripts/loop-close.sh --self-test: the close path, including its recovery, works
+  tickets       scripts/tickets milestone list reaches GitHub and names <milestone>
+  board         scripts/tickets check over the milestone's open tickets: no state left inconsistent by an earlier run
+  allow-rules   every `scripts/tickets <verb>` the implementer runs has an allow rule in .claude/settings.json,
+                and the implementer's instructions never chain or prefix a ticket call (runs 3 and 4 halted on this)
+
+GitHub is only read. A write would post an event comment on every run.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+IMPLEMENTER = ".claude/agents/ticket-implementer.md"
+SETTINGS = ".claude/settings.json"
+
+
+def run(cmd, root):
+    try:
+        r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=600)
+        return r.returncode, (r.stdout + r.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired) as x:
+        return 1, str(x)
+
+
+def last(out):
+    lines = out.splitlines()
+    return lines[-1] if lines else "no output"
+
+
+def check_allow_rules(implementer_text, settings_text):
+    """-> list of problems."""
+    out = []
+    verbs = sorted(set(re.findall(r"scripts/tickets ([a-z]+)", implementer_text)))
+    if not verbs:
+        out.append("the implementer names no `scripts/tickets <verb>`; cannot check its allow rules")
+    try:
+        allow = json.loads(settings_text).get("permissions", {}).get("allow", [])
+    except ValueError as x:
+        return out + ["%s is not JSON: %s" % (SETTINGS, x)]
+    for v in verbs:
+        if "Bash(scripts/tickets %s:*)" % v not in allow:
+            out.append("no allow rule `Bash(scripts/tickets %s:*)` for the implementer's `%s`" % (v, v))
+    for i, line in enumerate(implementer_text.splitlines(), 1):
+        if re.search(r"(&&|;|\|\|)\s*scripts/tickets|\bcd\b[^`]*&&[^`]*scripts/tickets|/scripts/tickets", line):
+            out.append("%s:%d chains, prefixes or absolutises a ticket call, which no allow rule matches" % (IMPLEMENTER, i))
+    return out
+
+
+def doctor(milestone, root=ROOT, runner=run, read=None):
+    """-> list of (check, ok, detail)."""
+    read = read or (lambda p: open(os.path.join(root, p), encoding="utf-8").read())
+    res = []
+    code, out = runner([sys.executable, "-I", "scripts/metal-toolchain"], root)
+    res.append(("toolchain", code == 0, last(out)))
+    code, out = runner(["bash", "scripts/loop-close.sh", "--self-test"], root)
+    res.append(("loop-close", code == 0, last(out)))
+    code, out = runner(["scripts/tickets", "milestone", "list"], root)
+    named = code == 0 and any(l.split()[:1] == [milestone] for l in out.splitlines())
+    res.append(("tickets", named, "milestone %s found" % milestone if named else
+                ("exit %d: %s" % (code, last(out)) if code else "no milestone %s" % milestone)))
+    if named:
+        code, out = runner(["scripts/tickets", "list", "--milestone", milestone, "--json"], root)
+        try:
+            nums = [str(t["number"]) for t in json.loads(out)] if code == 0 else None
+        except (ValueError, KeyError, TypeError):
+            nums = None
+        if nums is None:
+            res.append(("board", False, "could not list %s: %s" % (milestone, last(out))))
+        elif not nums:
+            res.append(("board", True, "no open tickets"))
+        else:
+            code, out = runner(["scripts/tickets", "check"] + nums, root)
+            res.append(("board", code == 0, last(out)))
+    else:
+        res.append(("board", False, "skipped: tickets unreachable"))
+    try:
+        probs = check_allow_rules(read(IMPLEMENTER), read(SETTINGS))
+    except OSError as x:
+        probs = [str(x)]
+    res.append(("allow-rules", not probs, "; ".join(probs) or "%s matches %s" % (IMPLEMENTER, SETTINGS)))
+    return res
+
+
+def self_test():
+    good_impl = "1. Claim: `git switch main`, then `scripts/tickets claim N --auto`.\nrun `scripts/tickets section N --heading H`"
+    good_set = json.dumps({"permissions": {"allow": ["Bash(scripts/tickets claim:*)", "Bash(scripts/tickets section:*)"]}})
+
+    def fake(answers):
+        def runner(cmd, root):
+            key = " ".join(cmd[2:] if cmd[0] == sys.executable else cmd[1:] if cmd[0] == "bash" else cmd)
+            for k, v in answers.items():
+                if key.startswith(k):
+                    return v
+            return 0, "ok"
+        return runner
+
+    healthy = {"scripts/tickets milestone list": (0, "engine-01 planned open 6\nengine-02 planned open 6"),
+               "scripts/tickets list": (0, json.dumps([{"number": 2}, {"number": 9}])),
+               "scripts/tickets check": (0, "checked 2 issue(s): 0 problem(s)")}
+    files = {IMPLEMENTER: good_impl, SETTINGS: good_set}
+
+    def go(answers, f=files, m="engine-01"):
+        return {c: ok for c, ok, _ in doctor(m, runner=fake(answers), read=lambda p: f[p])}
+
+    def with_(**kw):
+        d = dict(healthy)
+        d.update(kw)
+        return d
+
+    checks = [
+        ("a healthy setup passes every check", all(go(healthy).values()) and len(go(healthy)) == 5),
+        ("a missing toolchain fails toolchain only",
+         go(with_(**{"scripts/metal-toolchain": (1, "missing")})) == dict(go(healthy), toolchain=False)),
+        ("a failing loop-close self-test fails", go(with_(**{"scripts/loop-close.sh": (1, "4/5")}))["loop-close"] is False),
+        ("an unknown milestone fails tickets and board", (lambda r: not r["tickets"] and not r["board"])(go(healthy, m="engine-09"))),
+        ("unreachable GitHub fails tickets", go(with_(**{"scripts/tickets milestone list": (2, "HTTP 502")}))["tickets"] is False),
+        ("an inconsistent board fails board", go(with_(**{"scripts/tickets check": (1, "1 problem(s)")}))["board"] is False),
+        ("a verb without an allow rule fails",
+         go(healthy, f={IMPLEMENTER: good_impl + "\n`scripts/tickets body N`", SETTINGS: good_set})["allow-rules"] is False),
+        ("a chained claim fails (the HE-9 denial)",
+         go(healthy, f={IMPLEMENTER: "`git switch main && scripts/tickets claim N --auto`", SETTINGS: good_set})["allow-rules"] is False),
+        ("an absolute ticket path fails",
+         go(healthy, f={IMPLEMENTER: good_impl + "\n`/repo/scripts/tickets claim N`", SETTINGS: good_set})["allow-rules"] is False),
+        ("the repository's own implementer and settings pass", not check_allow_rules(
+            open(os.path.join(ROOT, IMPLEMENTER), encoding="utf-8").read(),
+            open(os.path.join(ROOT, SETTINGS), encoding="utf-8").read())),
+    ]
+    failed = [n for n, ok in checks if not ok]
+    for n in failed:
+        print("FAIL " + n)
+    print("loop-doctor self-test: %d/%d" % (len(checks) - len(failed), len(checks)))
+    return 1 if failed else 0
+
+
+def main(args):
+    if args == ["--self-test"]:
+        return self_test()
+    if len(args) != 1 or args[0].startswith("-"):
+        print(__doc__.strip(), file=sys.stderr)
+        return 64
+    res = doctor(args[0])
+    for c, ok, detail in res:
+        print("doctor %-11s %s  %s" % (c, "ok  " if ok else "FAIL", detail))
+    bad = [c for c, ok, _ in res if not ok]
+    print("doctor: %s" % ("ok" if not bad else "failed: " + " ".join(bad)))
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

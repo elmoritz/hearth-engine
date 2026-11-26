@@ -19,7 +19,8 @@ what and when; they point here for the rules, so a rule is written once.
 | `scripts/mutate.py` | Mutation check over the changed lines: would a test notice? |
 | `scripts/perf.py` | Probes against `docs/perf/baseline.json`: a tripwire on the Mac, not the device budgets |
 | `scripts/land.sh` | Fast-forwards `main` to an approved branch and pushes it |
-| `scripts/loop-close.sh` | Posts the review, lands, and ships a ticket or leaves it waiting for the owner |
+| `scripts/loop-close.sh` | Posts the review, lands, and ships a ticket or leaves it waiting for the owner; a failed ticket write that left the ticket in its end state counts as done |
+| `scripts/loop-doctor` | The loop's preflight: toolchain, close path, GitHub, board consistency, the implementer's allow rules |
 | `scripts/retro/extract.py` | Turns a milestone's logs and transcripts into `docs/retros/<M>.metrics.json` |
 | `/ticket:auto <M>` | The loop over one milestone |
 | `/ticket:followups <M>` | Files what the loop noticed and did not do |
