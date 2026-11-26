@@ -204,7 +204,9 @@ public final class FrameLoop {
         layer: CAMetalLayer, device: MTLDevice?, configuration: FrameLoopConfiguration = FrameLoopConfiguration(),
         source: any FrameSource, events: @escaping @MainActor (EngineEvent) -> Void = { _ in }
     ) async throws(EngineError) {
-        guard let device else { throw .noDevice }
+        guard let device else {
+            throw .noDevice
+        }
         let warmup = try await MetalBackend.warm(device: device, restrictions: configuration.restrictions)
         let backend = try MetalBackend(device: device, warmup: warmup)
         let surface = MetalLayerSurface(layer: layer, device: device)

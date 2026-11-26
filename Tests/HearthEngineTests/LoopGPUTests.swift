@@ -33,6 +33,7 @@ import Testing
             configuration: FrameLoopConfiguration(idiom: .mac), info: nil, events: { _ in })
         for (points, scale) in Self.layouts {
             loop.layoutChanged(size: points, scale: scale)
+            #expect(surface.drawableSize == layer.drawableSize)
             let expected = CGSize(width: points.width * scale, height: points.height * scale)
             #expect(abs(layer.drawableSize.width - expected.width) <= 1 && abs(layer.drawableSize.height - expected.height) <= 1)
             let drawable = try #require(surface.nextDrawable())

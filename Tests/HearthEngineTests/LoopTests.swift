@@ -411,6 +411,7 @@ import Testing
         let cases: [(CGSize, CGFloat, Int, PixelSize?)] = [
             (CGSize(width: 0, height: 0), 2, 16384, nil),
             (CGSize(width: 10, height: 0), 2, 16384, nil),
+            (CGSize(width: 0, height: 10), 2, 16384, nil),
             (CGSize(width: -10, height: 10), 2, 16384, nil),
             (CGSize(width: 10, height: 10), 0, 16384, nil),
             (CGSize(width: CGFloat.nan, height: 10), 2, 16384, nil),
@@ -511,6 +512,9 @@ import Testing
         #expect(DeviceIdiom.idiom(model: "iPhone15,2") == .phone)
         #expect(DeviceIdiom.idiom(model: "iPad13,4") == .pad)
         #expect(DeviceIdiom.idiom(model: "arm64") == .mac)
+        #expect(DeviceIdiom.modelName(Array("iPhone17,1".utf8CString)) == "iPhone17,1")
+        #expect(DeviceIdiom.modelName([0, 65]) == "")
+        #expect(DeviceIdiom.modelName([]) == "")
         #expect(DeviceIdiom.current == .mac)
     }
 
@@ -527,6 +531,10 @@ import Testing
         #expect(conditions.lowPower && conditions.thermal == .serious)
         conditions.refresh(from: .processInfo)
         #expect(seen.count == 2 && seen[0].0 && seen[0].1 == .serious)
+        // A notification posted on the main thread reaches the main-queue observer before `post` returns.
+        center.post(name: ProcessInfo.thermalStateDidChangeNotification, object: nil)
+        center.post(name: .NSProcessInfoPowerStateDidChange, object: nil)
+        #expect(seen.count == 4)
         conditions.invalidate()
 
         let rig = LoopRig()

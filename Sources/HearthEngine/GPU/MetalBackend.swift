@@ -36,7 +36,7 @@ final class MetalBackend: GPUBackend {
     private let sampler: MTLSamplerState
     private let pipelines: [PipelineKey: MTLRenderPipelineState]
     private var textures: [TextureID: MTLTexture] = [:]
-    private var sceneTexture: MTLTexture?
+    private(set) var sceneTexture: MTLTexture?
 
     var deviceName: String { device.name }
     var passLayout: PassLayout { capabilities.passLayout }

@@ -190,6 +190,19 @@ import Testing
         #expect(text == "no_such_vertex: the device returned nothing")
     }
 
+    @Test(.requiresGPU) func `E-PSO-3 a pipeline Metal refuses fails init with gpuFailure naming the key`() async throws {
+        // The final stage's vertex function swapped for one that needs a vertex layout the final stage has none of.
+        let mismatched: FunctionTable = { key in key.stage == .final ? ("quad_vertex", key.functions.fragment) : key.functions }
+        let text = await Self.gpuFailureText { _ = try await Self.backend(restrictions: .floor, functions: mismatched) }
+        #expect(text?.hasPrefix("pipeline final/opaque/twoPass/") == true)
+    }
+
+    @Test func `E-PSO-1 the counters start at zero`() {
+        let counters = GPUCounters()
+        #expect(counters.renderPasses == 0 && counters.draws == 0 && counters.pipelineBinds == 0)
+        #expect(counters.pipelinesCreated == 0 && counters.pipelinesCreatedOnMainThread == 0)
+    }
+
     @Test(.requiresGPU) func `E-PSO-3 warm-up builds each key exactly once`() async throws {
         for (restrictions, layout) in Self.layouts {
             let backend = try await Self.backend(restrictions: restrictions)
@@ -240,6 +253,21 @@ import Testing
                 case .scene: attachment.storage == .memoryless && attachment.store == .dontCare
                 }
             }
+        }
+    }
+
+    @Test(.requiresGPU) func `E-PASS-1 the scene attachment is memoryless in the single pass and one level`() async throws {
+        for (restrictions, layout) in Self.layouts {
+            let backend = try await Self.backend(restrictions: restrictions)
+            _ = try Self.render(backend, FrameDescription(clearColor: Self.clear), width: 5, height: 3)
+            let scene = try #require(backend.sceneTexture)
+            #expect(scene.storageMode == (layout == .singlePass ? .memoryless : .private))
+            #expect(scene.mipmapLevelCount == 1 && scene.pixelFormat == .rgba16Float)
+            #expect(scene.width == 5 && scene.height == 3)
+            _ = try Self.render(backend, FrameDescription(clearColor: Self.clear), width: 5, height: 3)
+            #expect(backend.sceneTexture === scene)
+            _ = try Self.render(backend, FrameDescription(clearColor: Self.clear), width: 6, height: 3)
+            #expect(backend.sceneTexture !== scene && backend.sceneTexture?.width == 6)
         }
     }
 

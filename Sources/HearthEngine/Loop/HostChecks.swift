@@ -28,9 +28,14 @@ public enum DeviceIdiom: Sendable, Hashable, CaseIterable {
             sysctlbyname("hw.machine", nil, &size, nil, 0)
             var bytes = [CChar](repeating: 0, count: Swift.max(size, 1))
             sysctlbyname("hw.machine", &bytes, &size, nil, 0)
-            return String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            return modelName(bytes)
         }
     #endif
+
+    /// A NUL-terminated C string from `sysctl`, as Swift text.
+    static func modelName(_ bytes: [CChar]) -> String {
+        String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
 }
 
 /// A condition the engine reports and never acts on alone.

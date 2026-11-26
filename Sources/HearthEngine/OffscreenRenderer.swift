@@ -27,10 +27,6 @@ public final class OffscreenRenderer {
         backend = try MetalBackend(device: device, warmup: warmup)
     }
 
-    init(backend: MetalBackend) {
-        self.backend = backend
-    }
-
     /// Registers `image` under `id`, replacing what was there. Throws `textureTooLarge` past the device's limit.
     public func setTexture(_ id: TextureID, image: PixelImage) throws(EngineError) {
         try backend.setTexture(id, image: image)
