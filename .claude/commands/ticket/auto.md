@@ -57,7 +57,7 @@ Everything lives in `.build/auto-loop/` (gitignored):
 `parked` and `landed` start empty (`landed` is seeded from this milestone's `landed-unapproved` lines in `run.log`). Repeat:
 
 1. **Checkpoint, then pick.** Re-run the queue. Eligible = its `eligible` group, plus every `waiting` ticket whose `waiting_on` are all in `landed` (their code is on `main`; only the owner's approval is open), minus `parked`. Take the first. None left: wrap up.
-2. **Brief.** `python3 -I scripts/catalogue.py brief N`. If it prints `NOT IN CATALOGUE`, carry on; the implementer reconciles the stale side in its plan. Log `claim`.
+2. **Brief.** `python3 -I scripts/catalogue.py brief N`. If it prints `NOT IN CATALOGUE`, carry on; the implementer reconciles the stale side in its plan. The implementer claims; this session logs `claim` only once a report names a branch, since the claim comes before the branch.
 3. **Implement.** Read the ticket's fields from the queue row.
    - Risk `high`, or effort `L` or `XL`: launch `ticket-implementer` with `plan HE-N`. On `STATUS: PLANNED`, launch `design-challenger` with `HE-N` and the numbers of the queue's tickets that wait on it; log `challenge <verdict> <k>`. Then `SendMessage` the same implementer: `build HE-N` plus the objections verbatim (or "the challenger concedes"). If it cannot be continued, launch a new one with the same prompt.
    - Otherwise: launch `ticket-implementer` with `implement HE-N`.
@@ -65,6 +65,7 @@ Everything lives in `.build/auto-loop/` (gitignored):
    Read its report:
    - `BLOCKED: main is red`: log `halt main is red`, wrap up.
    - `BLOCKED: infra`: log `halt infra`, park nothing, wrap up (the ticket resumes next run).
+   - `BLOCKED: permission-denied`: log `halt permission-denied <the command>`, park nothing, wrap up. Never run the denied command for the implementer.
    - `BLOCKED: already claimed`: add to `parked` without touching the ticket, continue.
    - any other `BLOCKED`: **park**, continue.
    - `DONE`: log `implement-done`.
@@ -78,7 +79,7 @@ Everything lives in `.build/auto-loop/` (gitignored):
       - `APPROVE`: **close**, continue with the next ticket.
       - a finding ending in `Needs owner:`: attended, ask it via `AskUserQuestion` (the reviewer's options, the recommended first), write the answer to the issue (`--heading "Owner decision" --event "owner decision"`), log `owner <question> <answer>`, and send findings plus decision to the implementer. `--unattended`: park with the question as the reason.
       - `CHANGES_REQUESTED`: go to 4.
-   4. **Fix.** One `SendMessage` to the same implementer, `fix HE-N` with the full findings list; a new `ticket-implementer` with the same prompt if it cannot be continued. Log `fix <n>`. `BLOCKED: infra`: halt as above; any other `BLOCKED`: park. Then the next round on the new head.
+   4. **Fix.** One `SendMessage` to the same implementer, `fix HE-N` with the full findings list; a new `ticket-implementer` with the same prompt if it cannot be continued. Log `fix <n>`. `BLOCKED: infra` or `BLOCKED: permission-denied`: halt as above; any other `BLOCKED`: park. Then the next round on the new head.
    5. After the last round without `APPROVE` on a green gate: park, with the open findings as the reason.
 
 ### Close (approved)

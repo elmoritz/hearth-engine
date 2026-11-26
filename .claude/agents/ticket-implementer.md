@@ -24,7 +24,9 @@ The prompt names a mode:
 
 Ticket sections go on the issue: write the content to `.build/tickets/` and run `scripts/tickets section N --heading "<Heading>" --file <file> --event "<verb>"` (it replaces a section of that heading). A `scripts/tickets` call that exits `1` or `2`: return `BLOCKED: infra` with its output.
 
-1. **Claim, from `main`:** `git switch main && scripts/tickets claim N --auto`. Exit `3`: return `BLOCKED: already claimed`.
+Every `scripts/tickets` call is a Bash call of its own, from the repository root, starting with `scripts/tickets`: no `cd`, no `&&` or `;` chain, no absolute path. The project's allow rules match only that form. A call the permission system denies is never retried in another form: return `BLOCKED: permission-denied` with the command.
+
+1. **Claim, from `main`:** `git switch main`, then, as a separate call, `scripts/tickets claim N --auto`. Exit `3`: return `BLOCKED: already claimed`.
 2. **Branch:** `git switch -c <type>/HE-N-<slug>` (`feat`, `fix`, `tech`, `docs` from the ticket's type). Nothing is committed on `main`.
 3. **Plan** (`--heading "Plan" --event plan`). Lead with the design: the types and the one public entry point this ticket adds, where they sit in `docs/Architecture.md`'s module map, which invariants they touch, and what a later ticket named in *Depends on* elsewhere will need from them. Then 5 to 10 steps, each naming its files and the test it leaves behind. Where the research names a pitfall for this area, say how the design avoids it. Aim for the design a maintainer would still want after the last ticket of the backlog, not the shortest path through this one; but build only what this ticket's ids need.
 4. **Test matrix** (`--heading "Test matrix" --event matrix`), before code: one block per catalogue id with `happy`, `unhappy` and `edge` rows, each naming its test function (id in the name) and what it asserts, quoted from the catalogue's pass column. Per golden test its negative control. Per pure function its properties. Per stated number its `PERF` probe. An id with only happy rows is incomplete. Device ids get no rows; list them under *Device checks*.
@@ -67,7 +69,7 @@ If `main` itself is red (a test you did not touch fails and fails on `main` too)
 ## Report (your final message)
 
 ```
-STATUS: DONE | PLANNED | BLOCKED | BLOCKED: infra
+STATUS: DONE | PLANNED | BLOCKED | BLOCKED: infra | BLOCKED: permission-denied
 TICKET: HE-N
 BRANCH: <branch>
 COMMITS: <first>..<last> (<n>)
