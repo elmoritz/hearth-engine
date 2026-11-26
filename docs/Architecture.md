@@ -4,8 +4,9 @@ The engine as it stands, kept current by the tickets that change it. A ticket th
 invariant or an extension point updates this file in the same branch; the reviewer checks it and the milestone audit
 reads the whole milestone against it. It describes what exists. Plans live in tickets, reasons in `Decisions.md`.
 
-As of HE-1 the engine is the test harness's foundation: a headless offscreen path that draws flat and textured
-quads, and the tools every later ticket proves itself with.
+As of HE-9 the engine draws flat and textured quads, opaque or premultiplied-over, headless (the harness's
+foundation since HE-1) and on screen through a frame loop: display link, frame-rate policy, lifecycle gate and
+pipelines warmed at init, one render pass per frame or the two-pass fallback.
 
 ## Invariants
 
@@ -22,6 +23,11 @@ Numbered so a review can cite them. Each names where it comes from; an invariant
 6. **Swift 6 strict concurrency, warnings as errors, no dependencies** (E-API-1, lints `concurrency`, `deps`).
 7. **Proof has rules** (D22): references are human-approved, skipped is not passed, every golden test has a
    negative control, scenes carry checkable intent.
+8. **The engine never owns the host's state.** It reads the host's pause flag, lifecycle and interaction and
+   reports `contentRate`; it never writes them (E-LIFE-3, `research/engine-pitfalls.md` 1.7). It renders on demand:
+   nothing changing, no frame (D3, E-RATE-2).
+9. **No pipeline after warm-up.** Every pipeline is built at init, off the main thread; the set is frozen
+   (E-PSO-1..3).
 
 ## Module map
 
@@ -30,7 +36,7 @@ One package (`Package.swift`: Swift 6 language mode and warnings as errors on ev
 
 | Target | Path | Owns | May import |
 |---|---|---|---|
-| `HearthEngine` | `Sources/HearthEngine` | The engine: values, errors, the frame plan, the GPU boundary, shaders | Metal, Foundation |
+| `HearthEngine` | `Sources/HearthEngine` | The engine: values, errors, the frame plan, the GPU boundary, shaders, the frame loop | Metal, QuartzCore, Foundation, os |
 | `HearthHarness` | `Sources/HearthHarness` | What tests, and later the viewer, the benchmark app and the D22 harness tool, are built on: device probe, receipts, golden comparison, synthetic corpus, scene catalogue | `HearthEngine`, Metal, Foundation, CryptoKit |
 | `HearthEngineTests` | `Tests/HearthEngineTests` | The E and B suites that run on the Mac | both |
 
@@ -57,6 +63,18 @@ The engine imports nothing of the harness. Inside `HearthEngine`:
 - **`GPU/PipelineKey`**: stage (solid, textured, final), blend, layout and target format; each key's attachments
   (in the single pass, scene stages never write attachment 0 and the final stage never writes attachment 1) and
   shader functions.
+- **`GPU/MetalFrameSubmitter`**: the on-screen half: plans a frame, encodes it into the drawable with the shared
+  encoder, presents (after the measured interval on the `CADisplayLink` path) and commits; vertices in a ring of
+  three buffers; completions mapped to `CommandBufferOutcome` and handed to the loop on the main actor.
+- **`Loop/`**: the frame loop. Pure parts: `FramePolicy` (D3's table, E-RATE-1), `FrameClock` (time from link
+  targets, absolute, `dt` clamped to 0.1 s, `discontinuity` on a jump; E-TIME-2..4), `RateEstimator` (the delivered
+  rate snapped to the display's cadences, E-RATE-4), `LifecycleGate` (E-LIFE-1), `PixelSize` (drawable size from
+  layout, E-LIFE-4), `HostChecks` (E-PLIST-1). `FrameLoop` ties them to four seams, each faked in the tests:
+  `DisplayLinkDriver`, `DrawableLayer`, `FrameSubmitter` and the host's `FrameSource`. `DisplayLink.swift` holds
+  the `CAMetalDisplayLink` driver and the iOS `CADisplayLink` one (D9): the one file the clock lint exempts, though
+  it reads no clock. `MetalLayerSurface` configures the host's layer once (`framebufferOnly`, three drawables,
+  `.topLeft` gravity so a pending resize never scales old pixels). `SystemConditions` watches Low Power Mode and
+  thermal state.
 - **`Shaders/Quad.metal`**: compiled by the build into the target's bundle. Nothing compiles shader source at run
   time. The Metal Toolchain it needs is checked by `scripts/metal-toolchain` before every build (B-TOOL-1).
 
@@ -88,8 +106,17 @@ Inside `HearthHarness`:
   written verbatim; colour space and premultiplication of textures arrive with the colour pipeline (D1 is open).
 - `RenderTarget` (size and `PixelFormat`), `RenderOptions` (`missingTexture`: throw, the default, or draw the
   fallback colour).
-- `PixelImage`: RGBA8, row-major, top row first; sides in `1...16384`.
-- `EngineTime`: absolute seconds as `Double`; `phase(period:)` wraps on the CPU.
+- `FrameLoop`: the on-screen entry point, `@MainActor`. `init(layer:device:configuration:source:events:) async`;
+  the host sets `lifecycle`, `interacting`, `isPaused` and calls `layoutChanged(size:scale:)`, `setNeedsFrame()`,
+  `invalidate()`; it reads `contentRate` and `stats`. `FrameLoopConfiguration` (link kind, high rate, start time,
+  display maximum, restrictions, options, idiom). `FrameSource` (the host: `motion` and
+  `frame(for: FrameContext)`), `FrameContext`, `FrameClock`. `FramePolicy`, `FrameConditions`, `FrameRate`,
+  `FrameRateRange`, `ContentMotion`, `ThermalLevel`, `Lifecycle`, `DisplayLinkKind`, `DeviceIdiom`.
+  `EngineEvent` (`warning`, `commandBufferFailed`, `frameRefused`), `EngineWarning`, `CommandBufferFailure`,
+  `FrameLoopStats`.
+- `PixelImage`: RGBA8, row-major, top row first; sides in `1...16384`; a device may allow less (`textureTooLarge`).
+- `EngineTime`: absolute seconds as `Double`; `phase(period:)` wraps on the CPU, `gpuSeconds(period:)` is the
+  wrapped `Float` a shader sees, `frameIndex(framesPerSecond:count:)` and `progress(since:duration:)`.
 - `EngineError`: `noDevice`, `missingTexture`, `malformedAssetHeader`, `unsupportedFormat`, `invalidTargetSize`,
   `invalidQuad`, `opaqueAfterBlended`, `textureTooLarge`, `gpuFailure`. Every throwing function is `throws(EngineError)`.
 
@@ -111,8 +138,9 @@ Inside `HearthHarness`:
 - **Texture loading**: `OffscreenRenderer.setTexture(_:image:)` uploads an image directly. The container loader
   replaces the upload and keeps `TextureID`, and throws `malformedAssetHeader` and `unsupportedFormat` for the
   container's own header.
-- **Time**: `render` takes no time while the engine has no animated value of its own; time enters through
-  `HarnessScene.frame`. The first engine-side animated value adds the parameter. The display-link adapter, the one
-  file allowed to read a clock, produces `EngineTime`.
+- **Time**: on screen, time enters through `FrameContext.clock`, from the link's target timestamps; offscreen,
+  through `HarnessScene.frame`. `render` takes no time while the engine has no animated value of its own. Tweens
+  and particles (#10) reset cosmetic state on `FrameClock.discontinuity`.
+- **Frame-rate policy**: `FramePolicy.rate(for:)` is the whole table; a new input is a `FrameConditions` field.
 - **Scenes**: a new subsystem adds a `HarnessScene` to `catalogue()` and its parts to `postcard`.
 - **Serialisation**: `FrameDescription` is a plain value so it can become the scene file of D18 unchanged.
