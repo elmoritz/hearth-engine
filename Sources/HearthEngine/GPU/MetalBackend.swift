@@ -26,7 +26,9 @@ struct PipelineWarmup: Sendable {
 final class MetalBackend: GPUBackend {
     let device: MTLDevice
     let capabilities: GPUCapabilities
-    let builds: [PipelineBuild]
+    let library: MTLLibrary
+    /// Every pipeline this backend holds, in the order they were built; `counters.pipelinesCreated` is its count.
+    private(set) var builds: [PipelineBuild]
     private(set) var counters = GPUCounters()
     /// Test hook for the coverage negative control (E-PASS-2): leave the final stage out, so the target keeps
     /// whatever its don't-care load gave it.
@@ -34,7 +36,7 @@ final class MetalBackend: GPUBackend {
 
     private let queue: MTLCommandQueue
     private let sampler: MTLSamplerState
-    private let pipelines: [PipelineKey: MTLRenderPipelineState]
+    private var pipelines: [PipelineKey: MTLRenderPipelineState]
     private var textures: [TextureID: MTLTexture] = [:]
     private(set) var sceneTexture: MTLTexture?
 
@@ -45,10 +47,9 @@ final class MetalBackend: GPUBackend {
     init(device: MTLDevice, warmup: PipelineWarmup) throws(EngineError) {
         self.device = device
         capabilities = warmup.capabilities
+        library = warmup.library
         pipelines = warmup.pipelines
-        builds = warmup.builds
-        counters.pipelinesCreated = warmup.builds.count
-        counters.pipelinesCreatedOnMainThread = warmup.builds.filter(\.onMainThread).count
+        builds = []
         queue = try requireGPU("command queue") { device.makeCommandQueue() }
         let nearest = MTLSamplerDescriptor()
         nearest.minFilter = .nearest
@@ -56,27 +57,44 @@ final class MetalBackend: GPUBackend {
         nearest.sAddressMode = .clampToEdge
         nearest.tAddressMode = .clampToEdge
         sampler = try requireGPU("sampler") { device.makeSamplerState(descriptor: nearest) }
+        for build in warmup.builds {
+            count(build)
+        }
     }
 
-    /// Probes the device and builds every pipeline of its pass layout, concurrently, off the caller's thread.
+    /// The one place a build is counted (E-PSO-1): the warm-up's builds when the backend is made, and any later
+    /// one. `build(_:device:library:functions:)` is the only caller of `makeRenderPipelineState` in the engine.
+    private func count(_ build: PipelineBuild) {
+        builds.append(build)
+        counters.pipelinesCreated = builds.count
+        counters.pipelinesCreatedOnMainThread = builds.filter(\.onMainThread).count
+    }
+
+    /// Builds `key` after warm-up, through the same function as the warm-up, and counts it. The engine never calls
+    /// this: the frozen set is the rule (E-PSO-1). It exists so a test can show the counter sees such a build.
+    func buildAfterWarmup(_ key: PipelineKey) async throws(EngineError) {
+        let (state, onMain) = try await MetalBackend.build(key, device: device, library: library, functions: { $0.functions })
+        pipelines[key] = state
+        count(PipelineBuild(key: key, onMainThread: onMain))
+    }
+
+    /// Probes the device and builds every pipeline of its pass layout for `targetFormats`, concurrently, off the
+    /// caller's thread. The on-screen loop asks for the drawable's format only; the harness for both.
     @concurrent
     static func warm(
         device: MTLDevice,
         restrictions: GPURestrictions,
+        targetFormats: [PixelFormat] = PipelineKey.targetFormats,
         functions: @escaping FunctionTable = { $0.functions }
     ) async throws(EngineError) -> PipelineWarmup {
         let library = try requireGPU("shader library") { try device.makeDefaultLibrary(bundle: Bundle.module) }
-        let side = maxTextureSide { side in
-            let probe = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: side, height: 1, mipmapped: false)
-            probe.storageMode = .private
-            return device.makeTexture(descriptor: probe) != nil
-        }
+        let side = maxTextureSide(simulator: runsInSimulator)
         var pipelines = [PipelineKey: MTLRenderPipelineState]()
         var builds = [PipelineBuild]()
         var features: GPUFeatures = []
         if !restrictions.disabled.contains(.readsRenderTargetInPass) {
             // The probe is the single pass's own final stage: it builds exactly where reading the target works.
-            let probe = PipelineKey.final(layout: .singlePass, targetFormat: .bgra8Unorm)
+            let probe = PipelineKey.final(layout: .singlePass, targetFormat: targetFormats.first ?? .bgra8Unorm)
             if let (state, onMain) = try? await build(probe, device: device, library: library, functions: functions) {
                 features.insert(.readsRenderTargetInPass)
                 pipelines[probe] = state
@@ -84,7 +102,8 @@ final class MetalBackend: GPUBackend {
             }
         }
         let capabilities = GPUCapabilities(features: features, maxTextureSide: side).restricted(by: restrictions)
-        let keys = PipelineKey.precompiled(layout: capabilities.passLayout).filter { pipelines[$0] == nil }
+        let keys = PipelineKey.precompiled(layout: capabilities.passLayout, targetFormats: targetFormats)
+            .filter { pipelines[$0] == nil }
         do {
             try await withThrowingTaskGroup(of: (PipelineKey, MTLRenderPipelineState, Bool).self) { group in
                 for key in keys {
@@ -107,9 +126,19 @@ final class MetalBackend: GPUBackend {
         return PipelineWarmup(library: library, capabilities: capabilities, pipelines: pipelines, builds: builds)
     }
 
-    /// The largest texture side: 16384 where a 16384-wide texture can be made, the Simulator's 8192 otherwise.
-    static func maxTextureSide(allocates: (Int) -> Bool) -> Int {
-        allocates(PixelImage.maximumDimension) ? PixelImage.maximumDimension : 8192
+    /// The largest texture side: 16384 on every Apple GPU of the floor, 8192 in the Simulator. Metal has no query,
+    /// and allocating past the limit to find it trips API validation, so the limit comes from the environment (an
+    /// environment, not a GPU family).
+    static func maxTextureSide(simulator: Bool) -> Int {
+        simulator ? 8192 : PixelImage.maximumDimension
+    }
+
+    static var runsInSimulator: Bool {
+        #if targetEnvironment(simulator)
+            true
+        #else
+            false
+        #endif
     }
 
     @concurrent
@@ -255,8 +284,15 @@ final class MetalBackend: GPUBackend {
         let encoder = try requireGPU("render encoder") { commands.makeRenderCommandEncoder(descriptor: first) }
         frame.renderPasses += 1
         var bound: MTLRenderPipelineState?
+        // A key outside the frozen set ends the encoder before the error leaves, so no encoder is left open.
         func bind(_ key: PipelineKey, on encoder: MTLRenderCommandEncoder) throws(EngineError) {
-            let state = try pipeline(key)
+            let state: MTLRenderPipelineState
+            do {
+                state = try pipeline(key)
+            } catch {
+                encoder.endEncoding()
+                throw error
+            }
             if state !== bound {
                 encoder.setRenderPipelineState(state)
                 bound = state

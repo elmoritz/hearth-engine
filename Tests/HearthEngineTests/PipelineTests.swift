@@ -197,6 +197,51 @@ import Testing
         #expect(text?.hasPrefix("pipeline final/opaque/twoPass/") == true)
     }
 
+    @Test(.requiresGPU) func `E-PSO-1 negative control a build after warm-up raises the counter`() async throws {
+        let backend = try await Self.backend()
+        let warmed = backend.counters.pipelinesCreated
+        let late = PipelineKey.scene(.color(.red), blend: .opaque, layout: .twoPass, targetFormat: .rgba8Unorm)
+        try await backend.buildAfterWarmup(late)
+        // The tour's assertion and the probe's value, computed as they are: both see the build.
+        #expect(backend.counters.pipelinesCreated != warmed)
+        #expect(backend.counters.pipelinesCreated - warmed == 1)
+        #expect(backend.counters.pipelinesCreatedOnMainThread == 0)
+        #expect(backend.pipelineKeys.contains(late) && backend.builds.last?.key == late)
+    }
+
+    @Test func `E-PSO-1 makeRenderPipelineState has one caller in the engine`() throws {
+        var calls = [String]()
+        for path in Repo.sourceFiles() where path.hasPrefix("Sources/") && path.hasSuffix(".swift") {
+            let text = try Repo.read(path)
+            let count = text.components(separatedBy: ".makeRenderPipelineState(").count - 1
+            calls += Array(repeating: path, count: count)
+        }
+        #expect(calls == ["Sources/HearthEngine/GPU/MetalBackend.swift"])
+    }
+
+    @Test(.requiresGPU) func `E-PSO-1 a key outside the set ends the encoder and throws`() async throws {
+        let device = try Self.device()
+        for restrictions in [GPURestrictions.none, .floor] {
+            let warmup = try await MetalBackend.warm(device: device, restrictions: restrictions, targetFormats: [.bgra8Unorm])
+            let backend = try MetalBackend(device: device, warmup: warmup)
+            let layout = backend.passLayout
+            let quad = FrameDescription(quads: [Quad(x: 0, y: 0, width: 1, height: 1, color: .red)])
+            let scene = await Self.gpuFailureText { _ = try Self.render(backend, quad, width: 2, height: 2) }
+            let empty = await Self.gpuFailureText { _ = try Self.render(backend, FrameDescription(), width: 2, height: 2) }
+            if layout == .singlePass {
+                #expect(scene == "pipeline solid/opaque/singlePass/rgba8Unorm was not built at warm-up")
+            } else {
+                #expect(scene == "pipeline final/opaque/twoPass/rgba8Unorm was not built at warm-up")
+            }
+            #expect(empty == "pipeline final/opaque/\(layout)/rgba8Unorm was not built at warm-up")
+            // The drawable's format still renders.
+            let image = try backend.render(
+                FramePlan(frame: quad, target: RenderTarget(width: 2, height: 2, format: .bgra8Unorm), options: RenderOptions()) { _ in true },
+                target: RenderTarget(width: 2, height: 2, format: .bgra8Unorm))
+            #expect(image[0, 0] == .red)
+        }
+    }
+
     @Test func `E-PSO-1 the counters start at zero`() {
         let counters = GPUCounters()
         #expect(counters.renderPasses == 0 && counters.draws == 0 && counters.pipelineBinds == 0)
@@ -504,9 +549,9 @@ import Testing
         #expect(renderer.capabilities == GPUCapabilities(features: .all, maxTextureSide: 16384))
         let floor = try await HarnessGPU.makeRenderer(restrictions: .floor)
         #expect(floor.capabilities == GPUCapabilities(features: [], maxTextureSide: 8192))
-        #expect(MetalBackend.maxTextureSide { _ in true } == 16384)
-        #expect(MetalBackend.maxTextureSide { _ in false } == 8192)
-        #expect(MetalBackend.maxTextureSide { $0 <= 8192 } == 8192)
+        #expect(MetalBackend.maxTextureSide(simulator: false) == 16384)
+        #expect(MetalBackend.maxTextureSide(simulator: true) == 8192)
+        #expect(!MetalBackend.runsInSimulator)
     }
 
     @Test func `E-API-3 forcing a feature off that the device lacks changes nothing`() {
