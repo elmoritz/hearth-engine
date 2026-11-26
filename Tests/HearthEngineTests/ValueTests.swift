@@ -90,12 +90,14 @@ import Testing
         let errors: [EngineError] = [
             .noDevice, .missingTexture("grass"), .malformedAssetHeader(width: 2, height: 3, byteCount: 5),
             .unsupportedFormat(.rgba16Float), .invalidTargetSize(width: 0, height: 9), .invalidQuad(index: 7),
-            .gpuFailure("render target"),
+            .gpuFailure("render target"), .opaqueAfterBlended(index: 3),
+            .textureTooLarge(width: 9000, height: 2, limit: 8192),
         ]
         #expect(errors.map(\.description) == [
             "no Metal device", "missing texture 'grass'", "malformed asset header: 2x3 with 5 bytes",
             "unsupported format rgba16Float", "invalid target size 0x9", "quad 7 has a rectangle that is not finite",
-            "GPU failure: render target",
+            "GPU failure: render target", "quad 3 is opaque but follows a blended quad",
+            "texture 9000x2 exceeds this device's limit of 8192",
         ])
     }
 
@@ -131,7 +133,7 @@ import Testing
         #expect(RenderOptions().missingTexture == .throwError)
         let plan = try FramePlan(frame: frame, target: target, options: RenderOptions(missingTexture: .fallback)) { $0 == "held" }
         #expect(plan.draws == [
-            FramePlan.Draw(firstVertex: 0, source: .texture("held")), FramePlan.Draw(firstVertex: 6, source: .color(.magenta)),
+            FramePlan.Draw(firstVertex: 0, source: .texture("held"), blend: .opaque), FramePlan.Draw(firstVertex: 6, source: .color(.magenta), blend: .opaque),
         ])
         #expect(TextureID("held") == "held")
     }
@@ -187,7 +189,7 @@ import Testing
         ])
         let plan = try FramePlan(frame: frame, target: RenderTarget(width: 8, height: 8), options: RenderOptions()) { _ in false }
         #expect(plan.draws == [
-            FramePlan.Draw(firstVertex: 0, source: .color(.red)), FramePlan.Draw(firstVertex: 6, source: .color(.blue)),
+            FramePlan.Draw(firstVertex: 0, source: .color(.red), blend: .opaque), FramePlan.Draw(firstVertex: 6, source: .color(.blue), blend: .opaque),
         ])
         #expect(plan.vertices.count == 2 * FramePlan.verticesPerQuad * FramePlan.floatsPerVertex)
         #expect(Array(plan.vertices[0..<24]) == [

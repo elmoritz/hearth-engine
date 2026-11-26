@@ -26,11 +26,11 @@ public struct PixelRect: Sendable, Hashable {
     }
 }
 
-/// The one drawable of HE-1: an axis-aligned rectangle filled with a colour or with a whole texture.
+/// An axis-aligned rectangle filled with a colour or with a whole texture.
 ///
-/// Values are written verbatim and unblended (no colour space, no premultiplication: Decisions D1 is open and
-/// the colour pipeline owns both). A pixel is covered when its centre lies inside the rectangle. A quad whose
-/// width or height is not positive covers nothing.
+/// Values are written verbatim (no colour space: Decisions D1 is open and the colour pipeline owns it). A pixel
+/// is covered when its centre lies inside the rectangle. A quad whose width or height is not positive covers
+/// nothing. `blend` says how it meets what is under it (E-PASS-3).
 public struct Quad: Sendable, Hashable {
     public enum Fill: Sendable, Hashable {
         case color(RGBA8)
@@ -38,25 +38,36 @@ public struct Quad: Sendable, Hashable {
         case texture(TextureID)
     }
 
+    /// How a quad is written. Opaque quads come first in a frame (the ground), blended ones after.
+    public enum Blend: Sendable, Hashable, CaseIterable {
+        /// Blending off: the quad's values replace what is there. The default.
+        case opaque
+        /// Premultiplied source over: `source + destination * (1 - source alpha)`.
+        case premultipliedOver
+    }
+
     public var rect: PixelRect
     public var fill: Fill
+    public var blend: Blend
 
-    public init(rect: PixelRect, fill: Fill) {
+    public init(rect: PixelRect, fill: Fill, blend: Blend = .opaque) {
         self.rect = rect
         self.fill = fill
+        self.blend = blend
     }
 
-    public init(x: Float, y: Float, width: Float, height: Float, color: RGBA8) {
-        self.init(rect: PixelRect(x: x, y: y, width: width, height: height), fill: .color(color))
+    public init(x: Float, y: Float, width: Float, height: Float, color: RGBA8, blend: Blend = .opaque) {
+        self.init(rect: PixelRect(x: x, y: y, width: width, height: height), fill: .color(color), blend: blend)
     }
 
-    public init(x: Float, y: Float, width: Float, height: Float, texture: TextureID) {
-        self.init(rect: PixelRect(x: x, y: y, width: width, height: height), fill: .texture(texture))
+    public init(x: Float, y: Float, width: Float, height: Float, texture: TextureID, blend: Blend = .opaque) {
+        self.init(rect: PixelRect(x: x, y: y, width: width, height: height), fill: .texture(texture), blend: blend)
     }
 }
 
 /// Everything one frame draws: an immutable value with no closures and no GPU objects (invariant 2), so it can
-/// cross threads and be serialised. Quads are drawn in order; a later quad overwrites an earlier one.
+/// cross threads and be serialised (E-API-2). Quads are drawn in order: every opaque quad before every blended one
+/// (E-PASS-3); a later opaque quad overwrites an earlier one.
 public struct FrameDescription: Sendable, Hashable {
     public var clearColor: RGBA8
     public var quads: [Quad]
