@@ -1,0 +1,40 @@
+{
+ "note": "Mac tripwire, not the device budgets. See scripts/perf.py.",
+ "probes": {
+  "frame.binds.postcard": {
+   "kind": "count",
+   "unit": "binds",
+   "value": 3.0
+  },
+  "frame.draws.postcard": {
+   "kind": "count",
+   "unit": "draws",
+   "value": 25.0
+  },
+  "frame.passes": {
+   "kind": "count",
+   "unit": "passes",
+   "value": 1.0
+  },
+  "loop.jump-frame-ratio": {
+   "kind": "time",
+   "unit": "ratio",
+   "value": 0.9871600884117461
+  },
+  "pso.after-warmup": {
+   "kind": "count",
+   "unit": "pipelines",
+   "value": 0.0
+  },
+  "pso.warm.singlePass": {
+   "kind": "count",
+   "unit": "pipelines",
+   "value": 10.0
+  },
+  "pso.warm.twoPass": {
+   "kind": "count",
+   "unit": "pipelines",
+   "value": 6.0
+  }
+ }
+}
