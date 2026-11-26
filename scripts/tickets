@@ -4,13 +4,45 @@
 # so every command and agent in this repo calls `scripts/tickets` and nothing else.
 #
 # The game checkout is found at $IDLE_VILLAGE_REPO, else beside this repo's main checkout
-# (a linked worktree resolves through git's common dir).
+# (a linked worktree resolves through git's common dir). That checkout is the game loops' own and
+# can sit far behind its origin/main (127 commits when HE-9's close hit a 422 fixed upstream in
+# IV-568), so the shim runs a pinned copy of the game's origin/main instead:
+#
+#   scripts/tickets --sync-tool   fetch the game's origin/main, self-test its scripts/tickets, pin it
+#                                 under .build/tickets-tool/ (scripts/loop-doctor runs this first)
+#   scripts/tickets <args>        the pinned copy when there is one, else the checkout's
 set -euo pipefail
 common="$(cd "$(dirname "$0")/.." && cd "$(git rev-parse --git-common-dir)" && pwd)"
-game="${IDLE_VILLAGE_REPO:-$(dirname "$(dirname "$common")")/idle-village-game}"
-if [[ ! -x "$game/scripts/tickets" ]]; then
-  echo "tickets: no scripts/tickets at $game; set IDLE_VILLAGE_REPO to the idle-village-game checkout" >&2
-  exit 2
+root="$(dirname "$common")"
+game="${IDLE_VILLAGE_REPO:-$(dirname "$root")/idle-village-game}"
+pin="$root/.build/tickets-tool/tickets"
+
+if [[ "${1:-}" == "--sync-tool" ]]; then
+  [[ -d "$game/.git" || -f "$game/.git" ]] || { echo "tickets: no game checkout at $game; set IDLE_VILLAGE_REPO" >&2; exit 2; }
+  git -C "$game" fetch -q origin main || { echo "tickets: cannot fetch the game's origin/main" >&2; exit 2; }
+  sha="$(git -C "$game" rev-parse --short origin/main)"
+  mkdir -p "$(dirname "$pin")"
+  tmp="$pin.new"
+  git -C "$game" show origin/main:scripts/tickets > "$tmp" && chmod +x "$tmp"
+  if ! out="$(python3 -I "$tmp" --self-test 2>&1)"; then
+    rm -f "$tmp"
+    echo "tickets: the game's origin/main $sha scripts/tickets fails its self-test; the pin is unchanged" >&2
+    echo "$out" | tail -5 >&2
+    exit 2
+  fi
+  mv "$tmp" "$pin"
+  echo "$sha" > "$pin.sha"
+  echo "tickets: pinned the game's origin/main $sha"
+  exit 0
+fi
+
+tool="$pin"
+if [[ ! -x "$tool" ]]; then
+  tool="$game/scripts/tickets"
+  if [[ ! -x "$tool" ]]; then
+    echo "tickets: no scripts/tickets at $game; set IDLE_VILLAGE_REPO to the idle-village-game checkout" >&2
+    exit 2
+  fi
 fi
 export TICKETS_REPO="${TICKETS_REPO:-elmoritz/hearth-engine}"
-exec "$game/scripts/tickets" "$@"
+exec "$tool" "$@"

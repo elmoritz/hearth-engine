@@ -5,6 +5,8 @@
   scripts/loop-doctor --self-test
 
 Checks, in order (all run; the report lists every failure):
+  tickets-tool  scripts/tickets --sync-tool pins the game's origin/main scripts/tickets after its self-test
+                (HE-9's close hit a 422 that IV-568 had fixed upstream; the local game checkout was 127 behind)
   toolchain     scripts/metal-toolchain: the Metal compiler is installed (run 2 halted on this inside the implementer)
   loop-close    scripts/loop-close.sh --self-test: the close path, including its recovery, works
   tickets       scripts/tickets milestone list reaches GitHub and names <milestone>
@@ -61,6 +63,8 @@ def doctor(milestone, root=ROOT, runner=run, read=None):
     """-> list of (check, ok, detail)."""
     read = read or (lambda p: open(os.path.join(root, p), encoding="utf-8").read())
     res = []
+    code, out = runner(["scripts/tickets", "--sync-tool"], root)
+    res.append(("tickets-tool", code == 0, last(out)))
     code, out = runner([sys.executable, "-I", "scripts/metal-toolchain"], root)
     res.append(("toolchain", code == 0, last(out)))
     code, out = runner(["bash", "scripts/loop-close.sh", "--self-test"], root)
@@ -119,7 +123,9 @@ def self_test():
         return d
 
     checks = [
-        ("a healthy setup passes every check", all(go(healthy).values()) and len(go(healthy)) == 5),
+        ("a healthy setup passes every check", all(go(healthy).values()) and len(go(healthy)) == 6),
+        ("a tool that fails its self-test fails tickets-tool only",
+         go(with_(**{"scripts/tickets --sync-tool": (2, "fails its self-test")})) == dict(go(healthy), **{"tickets-tool": False})),
         ("a missing toolchain fails toolchain only",
          go(with_(**{"scripts/metal-toolchain": (1, "missing")})) == dict(go(healthy), toolchain=False)),
         ("a failing loop-close self-test fails", go(with_(**{"scripts/loop-close.sh": (1, "4/5")}))["loop-close"] is False),
