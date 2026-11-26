@@ -60,4 +60,9 @@ Written by `/milestone:retro`:
    dropped (why), or filed (the ticket).
 
 A finding needs evidence from more than one place, or one occurrence that was expensive. One odd moment in one
-transcript is not a finding.
+transcript is not a finding. It also has to clear a bar on what it cost or risks: at least 5% of the milestone's
+`tok_eq_totals`, a review round, a parked or halted ticket, a red or repeated full gate run, or a gate check that let
+a defect through. Leads below the bar go under **Below the bar**, one line each, after *Findings*. They are not
+discussed. A lead that reappears in the next retro's *Below the bar* is promoted to a finding. At most five findings
+are discussed; the rest move to *Below the bar*, marked "over the bar, cut by the cap". A retro with no finding over
+the bar says so and has nothing to discuss.

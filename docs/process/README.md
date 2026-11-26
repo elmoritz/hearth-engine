@@ -115,8 +115,19 @@ E-PROOF-2 ships, the done-check reads the engine's.
 ## Follow-ups
 
 Anything out of a ticket's scope that is worth doing becomes a draft in `.build/auto-loop/followups/`, one concern
-per file, with what was seen, where (`file:line`), why it matters and how it was found. Agents draft generously and
-never edit other tickets. `/ticket:followups` verifies and files them at the end of the milestone.
+per file, with what was seen, where (`file:line`), why it matters and how it was found. Agents never edit other
+tickets. `/ticket:followups` verifies them at the end of the milestone and files only what clears the bar.
+
+**The bar.** A concern becomes a ticket when at least one holds:
+
+- it is a correctness, safety or data-loss risk in the engine or a wrong claim in the catalogue or Decisions;
+- it already cost something measurable: a review round, a parked ticket, a halt, a red or repeated gate run, or a
+  gate step that could not run;
+- a named next ticket needs it, or will be built wrong without it;
+- it was seen before: a second sighting of a concern that was noted once.
+
+Below the bar it is **noted**: recorded in `.build/auto-loop/harvested.tsv` with its title, not filed. Style,
+naming, a cheaper way to write the same thing, a one-off oddity and "might matter later" are below the bar.
 
 ## Run state
 

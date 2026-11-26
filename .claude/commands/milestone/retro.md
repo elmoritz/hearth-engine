@@ -62,7 +62,7 @@ Then check each of the previous retro's applied actions against the metric it na
 
 ## Step 4: report
 
-Write `docs/retros/<M>.md` in the format of `docs/retros/README.md`: *Numbers* beside the previous milestone's, *Last retro's actions*, *Keep*, *Findings* `F1…Fn` ranked by cost, and an empty *Decisions* table with one row per finding.
+Write `docs/retros/<M>.md` in the format of `docs/retros/README.md`: *Numbers* beside the previous milestone's, *Last retro's actions*, *Keep*, *Findings* `F1…Fn` ranked by cost (only leads over the bar in `docs/retros/README.md`, at most five), *Below the bar* (one line each; the previous retro's *Below the bar* is checked first and a repeat is promoted), and an empty *Decisions* table with one row per finding. No finding over the bar: say so, commit the report, and skip Steps 5 and 6.
 
 Every finding names its evidence, the cause, the change as a diff against a named file, the metric that should move, and its kind: `process` (anything this command may edit) or `product` (`Sources/`, `Tests/`, `Package.swift`, `docs/TestCatalogue.md`, `docs/Decisions.md`, `docs/Architecture.md`). A change that makes an instruction longer says what it replaces: a retro that only ever adds text makes every later agent slower. A change that loosens the gate (a lower floor, a smaller mutant budget, a step turned off) says what the step caught in this milestone and what will catch it instead.
 

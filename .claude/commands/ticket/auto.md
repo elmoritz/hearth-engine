@@ -27,7 +27,7 @@ Everything lives in `.build/auto-loop/` (gitignored):
 - `caffeinate.pid`, `STOP` (if this file exists the loop stops at the next checkpoint; remove it at start), `report-<date>.md`.
 - `followups/`: drafts written by the agents and by this session. They survive across runs until filed; never clear the directory.
 
-**This session drafts too.** A rebase conflict, a flaky test the gate caught, a ticket parked for an ambiguity, a dispute the reviewer dropped that points at a doc gap, a gate step that was skipped: write `followups/loop-<ISO date>-<k>-<slug>.md` with `source: loop`.
+**This session drafts too**, when what it saw clears the bar (`docs/process/README.md` *Follow-ups*): a rebase conflict, a flaky test the gate caught, a ticket parked for an ambiguity, a dispute the reviewer dropped that points at a doc gap, a gate step skipped for a reason other than "no Package.swift yet", "no probes yet" or "no --base" on `main`. Write `followups/loop-<ISO date>-<k>-<slug>.md` with `source: loop`. A cause an open ticket already names gets no new draft.
 
 **Checkpoints** are before picking a ticket and before each review round. At a checkpoint, if `STOP` exists or the deadline has passed: log `stop`, leave an in-flight ticket claimed on its branch (the next run resumes it), and wrap up.
 

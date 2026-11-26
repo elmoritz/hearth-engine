@@ -5,7 +5,7 @@ argument-hint: <milestone> [--unattended]
 
 # /ticket:followups
 
-Turn the drafts in `.build/auto-loop/followups/` into tickets, once, before the milestone ships. `followup-filer` agents verify each draft against the code and the existing tickets and write the bodies; this session creates the issues. Nothing here changes engine code.
+Turn the drafts in `.build/auto-loop/followups/` that clear the bar (`docs/process/README.md` *Follow-ups*) into tickets, once, before the milestone ships. The rest are noted, not filed. `followup-filer` agents verify each draft against the code and the existing tickets and write the bodies; this session creates the issues. Nothing here changes engine code.
 
 The user's input: $ARGUMENTS
 
@@ -15,7 +15,7 @@ The user's input: $ARGUMENTS
 2. What the loop left on the milestone's issues and no draft covers. Write one draft per concern (`source: harvest`) from:
    - each parked ticket's `## Parked (auto loop)` reason, when it names something other than the ticket itself (a missing dependency, a doc that contradicts the catalogue);
    - open `minor` findings in the `## Agent review` of shipped tickets that say the same thing on two or more tickets (one draft for the pattern, not one per ticket);
-   - `halt` and `infra` lines in `run.log` since the milestone's `loop start`.
+   - `halt` and `infra` lines in `run.log` since the milestone's `loop start`, unless an open ticket already names that cause; then it is evidence for that ticket, folded once per run, not a new draft.
 3. None at all: print "no follow-ups" and stop.
 
 ## Step 2: verify and write
@@ -24,22 +24,24 @@ The user's input: $ARGUMENTS
 
 ## Step 3: file
 
-Read each batch's `manifest.tsv`. Attended: show the table (title, kind, proposed milestone, reason) and ask once via `AskUserQuestion`: "File <b> backlog tickets and <i> inbox briefs?", options **File all** (Recommended), **Inbox only** (everything goes to the inbox for the owner to triage), **Cancel**. `--unattended`: file all.
+Read each batch's `manifest.tsv`. If no line is `backlog`, `inbox` or `fold`, record the notes and drops and report without asking. Attended: show the table (title, kind, proposed milestone, the clause of the bar it clears) and ask once via `AskUserQuestion`: "File <b> backlog tickets and <i> inbox briefs?", options **File all** (Recommended), **Inbox only** (everything goes to the inbox for the owner to triage), **Cancel**. `--unattended`: file all.
 
 For each line:
 
 - `backlog`: `scripts/tickets create --title "<title>" --type <type> --stage backlog --body-file <OUT>/<slug>.md --priority <P> --effort <E> --risk <R> [--milestone <M'>] [--depends-on <numbers>]`. The milestone is the one the filer proposed if it exists and is open; otherwise none. Never create a milestone here.
 - `inbox`: `scripts/tickets create --title "<title>" --type <type> --stage inbox --body-file <OUT>/<slug>.md`.
 - `fold`: `scripts/tickets section <n> --heading "Follow-up" --file <OUT>/<slug>.md --mode append --event "follow-up"`.
+- `note`: nothing filed.
 - `drop`: nothing.
 
-After each, append `<draft path>\t<outcome>\t<ticket number or ->` to `.build/auto-loop/harvested.tsv`. Then `scripts/tickets check <the new numbers>`; a failure is reported, not repaired by hand. A `scripts/tickets` exit `1` or `2` stops the filing where it is: the remaining drafts stay unharvested for the next run.
+After each, append `<draft path>\t<outcome>\t<ticket number or ->\t<title>` to `.build/auto-loop/harvested.tsv`. The title is what a later run matches a second sighting against. Then `scripts/tickets check <the new numbers>`; a failure is reported, not repaired by hand. A `scripts/tickets` exit `1` or `2` stops the filing where it is: the remaining drafts stay unharvested for the next run.
 
 ## Report
 
 ```
-Follow-ups for <M>: <b> backlog, <i> inbox, <f> folded, <d> dropped.
+Follow-ups for <M>: <b> backlog, <i> inbox, <f> folded, <n> noted, <d> dropped.
 Backlog: HE-N <title> (<milestone or none>) ...
+Noted (filed if seen again): <title> ...
 Needs a human: <each inbox brief's question> (HE-N)
 Dropped: <draft> — <reason>
 ```
