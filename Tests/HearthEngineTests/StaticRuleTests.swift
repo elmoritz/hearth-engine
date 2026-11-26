@@ -84,6 +84,56 @@ import Testing
         #expect(hits == [])
     }
 
+    // MARK: E-TIME-1, the lint half
+
+    @Test func `E-TIME-1 the half-time lint fails on half time in a shader`() throws {
+        let hits = try Repo.lint(fixture: "half-time", [
+            "Sources/Engine/S.metal": ["ha" + "lf time = u.time;", "ha" + "lf u_time = 0;", "ha" + "lf4 timeScale = 1;"],
+        ])
+        #expect(hits == ["Sources/Engine/S.metal:1: [half-time]", "Sources/Engine/S.metal:2: [half-time]",
+                         "Sources/Engine/S.metal:3: [half-time]"])
+    }
+
+    @Test func `E-TIME-1 the half-time lint passes float time and the tree is clean`() throws {
+        let hits = try Repo.lint(fixture: "half-time-edge", [
+            "Sources/Engine/S.metal": ["float time = u.time;", "half alpha = 1;", "// ha" + "lf time in a comment"],
+            "Sources/Engine/A.swift": ["let note = \"ha" + "lf time\""],
+        ])
+        #expect(hits == [])
+        #expect(try Repo.lintTree().filter { $0.contains("[half-time]") } == [])
+    }
+
+    // MARK: E-API-3, the static half
+
+    @Test func `E-API-3 the metal4 family astc-hdr and argbuf-tier2 lints fail on their fixtures`() throws {
+        let hits = try Repo.lint(fixture: "floor", [
+            "Sources/Engine/A.swift": [
+                "let q: MTL4" + "CommandQueue",
+                "if d.supports" + "Family(.apple5) {}",
+                "let f = MTLPixelFormat.astc_4x4" + "_hdr",
+                "if d.argumentBuffersSupport == .tier" + "2 {}",
+            ],
+            "Sources/Engine/S.metal": ["constexpr auto f = astc_6x6" + "_hdr;"],
+        ])
+        #expect(hits == [
+            "Sources/Engine/A.swift:1: [metal4]", "Sources/Engine/A.swift:2: [family]",
+            "Sources/Engine/A.swift:3: [astc-hdr]", "Sources/Engine/A.swift:4: [argbuf-tier2]",
+            "Sources/Engine/S.metal:1: [astc-hdr]",
+        ])
+    }
+
+    @Test func `E-API-3 the floor lints pass ldr astc and the tree is clean`() throws {
+        let hits = try Repo.lint(fixture: "floor-edge", [
+            "Sources/Engine/A.swift": [
+                "let f = MTLPixelFormat.astc_4x4_ldr", "if d.argumentBuffersSupport == .tier1 {}",
+                "// astc_4x4" + "_hdr is above the floor",
+            ],
+        ])
+        #expect(hits == [])
+        let floor = ["[metal4]", "[family]", "[astc-hdr]", "[argbuf-tier2]"]
+        #expect(try Repo.lintTree().filter { hit in floor.contains { hit.contains($0) } } == [])
+    }
+
     // MARK: B-TOOL-1
 
     @Test func `B-TOOL-1 the check passes where the Metal Toolchain is installed`() throws {
