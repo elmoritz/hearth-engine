@@ -174,12 +174,17 @@ against. The alternative keeps today's kit convention (composite in sRGB display
 but deviates from Blender on partial alpha and glow. The kit's layers gate changes with the choice.
 Test that settles it: E-COL-5 (Blender oracle). See `research/image-quality.md` section 0. Whatever is chosen, the
 Simulator cannot read the scene attachment in the same pass and runs the two-pass fallback of D18.
+Until then (owner, 2026-11-26): HE-2's texture stage follows the recommendation provisionally (`_srgb` pages, straight
+alpha multiplied after sampling, so sampled values are premultiplied linear), in one function that E-COL-5 may change.
 
 **D6. Asset delivery format (owner; kit changes in IdleVillage).** Recommendation: pre-sized outputs per scale
 (@2x and @3x, re-rendered by Blender where affordable), offline mips (linear, premultiplied, Lanczos/Mitchell,
 clamped), ground tiles rendered at native resolution and painted 1-2 px past the diamond, our own container
 (KTX2 with premultiplied and colour-space flags), ASTC 4x4 gated by FLIP/PSNR/alpha checks with an uncompressed
 fallback for glow, fog and gradients. Replaces today's single 512 px PNG per asset and 1 px/pt tiles.
+Container part decided (owner, 2026-11-26): the engine reads a strict KTX2 subset (2D, one face, no supercompression,
+RGBA8 and ASTC 4x4, colour-space and premultiplied flags in the DFD, regions in the key/value block), built in HE-2.
+Output sizes, offline mips and the ASTC gate stay open with the kit.
 
 **D7. Ground drawing.** Recommendation: opaque quads clipped by diamond geometry with shared integer-derived
 vertices (no alpha on internal edges); a baked ground layer per chunk as the fallback if overdraw or seams fail.

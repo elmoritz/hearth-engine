@@ -1,4 +1,11 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(scripts/tickets claim:*)",
+      "Bash(scripts/tickets section:*)",
+      "Bash(scripts/tickets body:*)"
+    ]
+  },
   "hooks": {
     "SubagentStop": [
       {
