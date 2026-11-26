@@ -78,6 +78,9 @@ import Testing
         #expect(EngineTime(seconds: 1.0 / 12).frameIndex(framesPerSecond: 12, count: 8) == 1)
         #expect(EngineTime(seconds: 8.0 / 12).frameIndex(framesPerSecond: 12, count: 8) == 0)
         #expect(EngineTime(seconds: 7.0 / 12).frameIndex(framesPerSecond: 12, count: 8) == 7)
+        // Within the epsilon of the loop's end: the next loop's first frame, never `count`.
+        #expect(EngineTime(seconds: 8.0 / 12 - 1e-9).frameIndex(framesPerSecond: 12, count: 8) == 0)
+        #expect(EngineTime(seconds: 8.0 / 12 - 1e-3).frameIndex(framesPerSecond: 12, count: 8) == 7)
         #expect(EngineTime(seconds: -1.0 / 24).frameIndex(framesPerSecond: 12, count: 8) == 7)
         #expect(EngineTime(seconds: Self.thirtyDays + 1.0 / 12).frameIndex(framesPerSecond: 12, count: 8) == 1)
         for seconds in [Double.nan, .infinity, -.infinity] {
