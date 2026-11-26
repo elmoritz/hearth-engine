@@ -7,6 +7,9 @@ import QuartzCore
 /// nothing waits for the GPU (`research/performance-and-power.md` 2).
 @MainActor
 final class MetalFrameSubmitter: FrameSubmitter {
+    /// The drawable's format (`MetalLayerSurface.pixelFormat`), the only target format the loop warms.
+    static let drawableFormat = PixelFormat.bgra8Unorm
+
     let backend: MetalBackend
     let options: RenderOptions
     var onCompletion: ((SubmissionID, CommandBufferOutcome) -> Void)?
@@ -30,7 +33,7 @@ final class MetalFrameSubmitter: FrameSubmitter {
             throw .gpuFailure("drawable: not a CAMetalDrawable")
         }
         let texture = metal.drawable.texture
-        let target = RenderTarget(width: texture.width, height: texture.height, format: .bgra8Unorm)
+        let target = RenderTarget(width: texture.width, height: texture.height, format: MetalFrameSubmitter.drawableFormat)
         let backend = self.backend
         let plan = try FramePlan(frame: frame, target: target, options: options, maxTextureSide: maxTextureSide) {
             backend.hasTexture($0)
@@ -39,7 +42,7 @@ final class MetalFrameSubmitter: FrameSubmitter {
         let vertices = try vertexBuffer(for: plan, slot: slot)
         let queue = self.queue
         let commands = try requireGPU("command buffer") { queue.makeCommandBuffer() }
-        try backend.encode(plan, into: texture, format: .bgra8Unorm, commands: commands, vertices: vertices)
+        try backend.encode(plan, into: texture, format: MetalFrameSubmitter.drawableFormat, commands: commands, vertices: vertices)
         if let presentAfter {
             commands.present(metal.drawable, afterMinimumDuration: presentAfter)
         } else {

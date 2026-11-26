@@ -25,6 +25,9 @@ extension CAFrameRateRange {
 @MainActor
 final class MetalDisplayLinkDriver: NSObject, DisplayLinkDriver {
     private let link: CAMetalDisplayLink
+    /// Held for the link's lifetime: invalidating a link whose layer is gone crashes in QuartzCore.
+    private let layer: CAMetalLayer
+    private var invalidated = false
     /// The previous update's target: the update carries no `timestamp`, so the interval is target to target.
     private var previousTarget: Double?
 
@@ -32,7 +35,13 @@ final class MetalDisplayLinkDriver: NSObject, DisplayLinkDriver {
 
     var isPaused: Bool {
         get { link.isPaused }
-        set { link.isPaused = newValue }
+        set {
+            // A wake after render-on-demand idles is not a frame interval: start measuring again.
+            if link.isPaused && !newValue {
+                previousTarget = nil
+            }
+            link.isPaused = newValue
+        }
     }
 
     var preferredRange = FramePolicy.interaction {
@@ -41,6 +50,7 @@ final class MetalDisplayLinkDriver: NSObject, DisplayLinkDriver {
 
     init(layer: CAMetalLayer) {
         link = CAMetalDisplayLink(metalLayer: layer)
+        self.layer = layer
         super.init()
         link.delegate = self
         link.isPaused = true
@@ -48,7 +58,10 @@ final class MetalDisplayLinkDriver: NSObject, DisplayLinkDriver {
         link.add(to: .main, forMode: .common)
     }
 
+    /// Once: a second `invalidate` of a `CAMetalDisplayLink` crashes in QuartzCore.
     func invalidate() {
+        guard !invalidated else { return }
+        invalidated = true
         link.invalidate()
     }
 

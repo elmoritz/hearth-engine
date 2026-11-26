@@ -63,6 +63,8 @@ final class FakeSubmitter: FrameSubmitter {
     var waits: [SubmissionID] = []
     var refusal: EngineError?
     var duringSubmit: (() -> Void)?
+    /// The broken design of the E-API-2 negative control: encode the host's live state, not the sampled frame.
+    weak var encodesFrom: FakeSource?
     private(set) var pending: [SubmissionID] = []
     private var next = 0
 
@@ -71,7 +73,8 @@ final class FakeSubmitter: FrameSubmitter {
     func submit(_ frame: FrameDescription, to drawable: any FrameDrawable, presentAfter: Double?) throws(EngineError) -> SubmissionID {
         if let refusal { throw refusal }
         duringSubmit?()
-        submitted.append((frame, presentAfter))
+        let encoded = encodesFrom.map { FrameDescription(clearColor: .black, quads: $0.quads) } ?? frame
+        submitted.append((encoded, presentAfter))
         next += 1
         pending.append(SubmissionID(value: next - 1))
         return SubmissionID(value: next - 1)
@@ -140,4 +143,14 @@ struct LoopRig {
 @MainActor
 final class EventRecorder {
     var events: [EngineEvent] = []
+}
+
+/// A notification centre that counts removed observers.
+final class CountingCenter: NotificationCenter, @unchecked Sendable {
+    private(set) var removed = 0
+
+    override func removeObserver(_ observer: Any) {
+        removed += 1
+        super.removeObserver(observer)
+    }
 }

@@ -142,7 +142,9 @@ import Testing
         let source = FakeSource()
         let loop = try await FrameLoop(layer: layer, device: Self.device(), source: source)
         let submitter = try #require(loop.submitter as? MetalFrameSubmitter)
-        #expect(submitter.backend.counters.pipelinesCreated == PipelineKey.precompiled(layout: .singlePass).count)
+        // The drawable's format only: 5 single-pass pipelines, not the harness's 10.
+        #expect(submitter.backend.counters.pipelinesCreated == 5)
+        #expect(submitter.backend.pipelineKeys == Set(PipelineKey.precompiled(layout: .singlePass, targetFormats: [.bgra8Unorm])))
         #expect(submitter.backend.counters.pipelinesCreatedOnMainThread == 0)
         #expect(loop.contentRate == .paused)
         #expect(layer.framebufferOnly && layer.contentsGravity == .topLeft)
@@ -152,6 +154,19 @@ import Testing
             layer: CAMetalLayer(), device: Self.device(),
             configuration: FrameLoopConfiguration(highRateAllowed: true, idiom: .phone), source: source)
         phone.invalidate()
+    }
+
+    @Test(.requiresGPU) func `Perf E-PSO-2 on-screen pipelines warmed`() async throws {
+        for (restrictions, expected) in [(GPURestrictions.none, 5), (.floor, 5)] {
+            let loop = try await FrameLoop(
+                layer: CAMetalLayer(), device: Self.device(), configuration: FrameLoopConfiguration(restrictions: restrictions, idiom: .mac),
+                source: FakeSource())
+            let submitter = try #require(loop.submitter as? MetalFrameSubmitter)
+            let layout = submitter.backend.passLayout
+            print("PERF pso.warm.onscreen.\(layout) \(submitter.backend.counters.pipelinesCreated) pipelines count")
+            #expect(submitter.backend.counters.pipelinesCreated == expected)
+            loop.invalidate()
+        }
     }
 
     @Test func `E-HAR-4 a loop without a device throws noDevice`() async {
@@ -173,8 +188,18 @@ import Testing
         #expect(ticks.map(\.targetTimestamp) == [10, 10 + 1.0 / 60])
         driver.isPaused = false
         #expect(!driver.isPaused)
+        // A wake starts measuring again: no idle gap enters the estimator.
+        driver.deliver(target: 50, drawable: nil)
+        #expect(ticks.last?.timestamp == 50)
+        driver.isPaused = false
+        driver.deliver(target: 51, drawable: nil)
+        #expect(ticks.last?.timestamp == 50)
+        driver.isPaused = true
+        driver.deliver(target: 52, drawable: nil)
+        #expect(ticks.last?.timestamp == 51)
         driver.preferredRange = FramePolicy.ambience
         #expect(driver.preferredRange == FramePolicy.ambience)
+        driver.invalidate()
         driver.invalidate()
         #expect(makeDisplayLink(.displayLink, layer: layer) is MetalDisplayLinkDriver)
     }

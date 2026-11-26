@@ -193,6 +193,10 @@ public final class FrameLoop {
     private var size: PixelSize?
     private var inFlight = 0
     private var lastSubmission: SubmissionID?
+    /// The activation each frame in flight was submitted in (`LifecycleGate.activation`).
+    private var submittedIn: [SubmissionID: Int] = [:]
+    /// The last refusal reported, so a frame refused on every tick is logged once.
+    private var lastRefusal: EngineError?
 
     private static let log = Logger(subsystem: "HearthEngine", category: "FrameLoop")
 
@@ -207,7 +211,9 @@ public final class FrameLoop {
         guard let device else {
             throw .noDevice
         }
-        let warmup = try await MetalBackend.warm(device: device, restrictions: configuration.restrictions)
+        // The drawable's format only: the harness's rgba8 set would double the warm-up for nothing on screen.
+        let warmup = try await MetalBackend.warm(
+            device: device, restrictions: configuration.restrictions, targetFormats: [MetalFrameSubmitter.drawableFormat])
         let backend = try MetalBackend(device: device, warmup: warmup)
         let surface = MetalLayerSurface(layer: layer, device: device)
         let submitter = try MetalFrameSubmitter(backend: backend, options: configuration.options)
@@ -264,6 +270,12 @@ public final class FrameLoop {
             needsFrame = true
         }
         applyRate()
+    }
+
+    /// The run loop keeps a display link alive and firing after its owner is gone, so a loop released without
+    /// `invalidate()` invalidates on its way out.
+    isolated deinit {
+        invalidate()
     }
 
     /// Stops the link and the observers for good.
@@ -336,22 +348,29 @@ public final class FrameLoop {
         needsFrame = false
         let presentAfter = configuration.link == .displayLink ? estimator.presentInterval : nil
         do {
-            lastSubmission = try submitter.submit(frame, to: drawable, presentAfter: presentAfter)
+            let id = try submitter.submit(frame, to: drawable, presentAfter: presentAfter)
+            lastSubmission = id
+            submittedIn[id] = gate.activation
             inFlight += 1
             stats.framesEncoded += 1
+            lastRefusal = nil
         } catch {
-            emit(.frameRefused(error))
+            if error != lastRefusal {
+                emit(.frameRefused(error))
+            }
+            lastRefusal = error
         }
         applyRate()
     }
 
     private func completed(_ id: SubmissionID, _ outcome: CommandBufferOutcome) {
         inFlight = Swift.max(0, inFlight - 1)
+        let activation = submittedIn.removeValue(forKey: id)
         guard case .failed(let failure) = outcome else { return }
         emit(.commandBufferFailed(failure))
         switch failure {
         case .notPermitted, .accessRevoked:
-            gate.revoke()
+            gate.revoke(submittedIn: activation ?? gate.activation)
             applyRate()
         case .other:
             break

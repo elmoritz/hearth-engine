@@ -48,10 +48,13 @@ The engine imports nothing of the harness. Inside `HearthEngine`:
   refusal (target size, format, a quad that is not finite, a missing texture) is decided here, before a Metal call
   exists.
 - **`GPU/GPUBackend`** (internal protocol, invariant 4) and **`GPU/MetalBackend`**, its only conformer. `warm`
-  probes the device (programmable blending by building the single pass's own final stage, the texture limit by
-  allocation; never a family name) and builds every pipeline of `PipelineKey.precompiled` concurrently, off the
-  caller's thread, before the renderer exists (E-PSO-3). The set is then frozen: a key outside it is a
-  `gpuFailure`, never a build (E-PSO-1). One `encode` serves the offscreen target (then a blit readback) and a
+  probes the device (programmable blending by building the single pass's own final stage; never a family name),
+  takes the texture limit from the environment (8192 in the Simulator, 16384 elsewhere: Metal has no query and
+  allocating past it trips validation) and builds every pipeline of `PipelineKey.precompiled` for the requested
+  target formats concurrently, off the caller's thread, before the renderer exists (E-PSO-3). The on-screen loop
+  warms the drawable's format only (5 pipelines), the harness both (10). The set is then frozen: a key outside it
+  is a `gpuFailure`, never a build (E-PSO-1). `build` is the engine's only caller of `makeRenderPipelineState`
+  and every build is counted in one place. One `encode` serves the offscreen target (then a blit readback) and a
   drawable, so the goldens prove the on-screen encode. `GPUCounters` (passes, draws, binds per frame; pipelines
   ever built, and on the main thread) back the audits and the PERF probes. Every allocation goes through
   `requireGPU`, so a refusal is an `EngineError.gpuFailure`.
@@ -74,7 +77,9 @@ The engine imports nothing of the harness. Inside `HearthEngine`:
   the `CAMetalDisplayLink` driver and the iOS `CADisplayLink` one (D9): the one file the clock lint exempts, though
   it reads no clock. `MetalLayerSurface` configures the host's layer once (`framebufferOnly`, three drawables,
   `.topLeft` gravity so a pending resize never scales old pixels). `SystemConditions` watches Low Power Mode and
-  thermal state.
+  thermal state. A released loop invalidates its link and observers (`isolated deinit`): the run loop would keep a
+  link firing for an owner that is gone. Command-buffer failures carry the activation they were submitted in; one
+  from before the latest return to `.active` is logged and does not pause the loop.
 - **`Shaders/Quad.metal`**: compiled by the build into the target's bundle. Nothing compiles shader source at run
   time. The Metal Toolchain it needs is checked by `scripts/metal-toolchain` before every build (B-TOOL-1).
 

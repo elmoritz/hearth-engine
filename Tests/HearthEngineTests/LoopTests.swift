@@ -162,7 +162,7 @@ import Testing
             for _ in 0..<5 {
                 let rig = LoopRig()
                 rig.loop.interacting = true
-                let clock = ContinuousClock()  // lint:allow clock - a PERF time probe measures, it decides nothing
+                let clock = ContinuousClock()  // lint:allow clock - a PERF time probe: printed for the perf step, never asserted
                 let elapsed = clock.measure {
                     for _ in 0..<1000 {
                         rig.link.fire(interval: interval)
@@ -175,8 +175,9 @@ import Testing
             return best
         }
         let ratio = cost(interval: 3 * 86_400) / cost(interval: 1.0 / 60)
+        // Printed for the perf step to judge against the baseline; wall time asserts nothing here (test rule 7).
+        // E-TIME-4's bound is proven by work: `the loop draws one ordinary frame after a three-day jump`.
         print("PERF loop.jump-frame-ratio \(ratio) ratio time")
-        #expect(ratio <= 2)
     }
 
     // MARK: E-LIFE-1
@@ -225,7 +226,7 @@ import Testing
             #expect(gate.canEncode)
         }
         var revoked = LifecycleGate()
-        revoked.revoke()
+        revoked.revoke(submittedIn: 0)
         #expect(!revoked.canEncode && revoked.state == .active)
         let toInactive = revoked.enter(.inactive)
         let toBackground = revoked.enter(.background)
@@ -294,10 +295,79 @@ import Testing
             rig.loop.setNeedsFrame()
             rig.link.fire(times: 10)
             #expect(rig.frames == 1)
+            rig.loop.lifecycle = .inactive
             rig.loop.lifecycle = .active
             rig.link.fire()
             #expect(rig.frames == 2)
         }
+    }
+
+    @Test func `E-LIFE-2 a late failure from before the return does not pause the loop`() throws {
+        for failure in [CommandBufferFailure.notPermitted, .accessRevoked] {
+            let rig = LoopRig()
+            rig.settle()
+            rig.loop.setNeedsFrame()
+            rig.link.fire()
+            let suspended = try #require(rig.submitter.lastID)
+            rig.loop.lifecycle = .inactive
+            rig.loop.lifecycle = .background
+            rig.loop.lifecycle = .inactive
+            rig.loop.lifecycle = .active
+            // The buffer in flight at suspension completes after the host came back.
+            rig.submitter.complete(suspended, .failed(failure))
+            #expect(rig.events == [.commandBufferFailed(failure)])
+            let before = rig.frames
+            rig.loop.setNeedsFrame()
+            rig.link.fire()
+            rig.link.fire()
+            #expect(rig.frames == before + 1)
+        }
+        // A failure of work from the current activation, arriving while still away, still revokes.
+        var gate = LifecycleGate()
+        _ = gate.enter(.background)
+        gate.revoke(submittedIn: gate.activation)
+        _ = gate.enter(.active)
+        #expect(gate.canEncode && gate.activation == 1)
+        gate.revoke(submittedIn: 0)
+        #expect(gate.canEncode)
+        gate.revoke(submittedIn: 1)
+        #expect(!gate.canEncode)
+    }
+
+    @Test func `E-LIFE-2 a frame refused on every tick is reported once`() {
+        let rig = LoopRig()
+        rig.loop.interacting = true
+        rig.submitter.refusal = .missingTexture("absent")
+        rig.link.fire(times: 5)
+        #expect(rig.events == [.frameRefused(.missingTexture("absent"))])
+        rig.submitter.refusal = .invalidQuad(index: 0)
+        rig.link.fire(times: 2)
+        rig.submitter.refusal = nil
+        rig.link.fire()
+        rig.submitter.refusal = .missingTexture("absent")
+        rig.link.fire(times: 2)
+        #expect(rig.events == [
+            .frameRefused(.missingTexture("absent")), .frameRefused(.invalidQuad(index: 0)),
+            .frameRefused(.missingTexture("absent")),
+        ])
+        #expect(rig.frames == 1)
+    }
+
+    @Test func `E-LIFE-2 a released loop invalidates its link and observers`() {
+        let link = FakeLink()
+        let center = CountingCenter()
+        func run() {
+            let rig = LoopRig()
+            let loop = FrameLoop(
+                link: link, layer: rig.layer, submitter: rig.submitter, source: rig.source,
+                configuration: FrameLoopConfiguration(idiom: .mac), info: nil,
+                systemConditions: SystemConditions(center: center), events: { _ in })
+            loop.setNeedsFrame()
+            #expect(!link.invalidated)
+        }
+        run()
+        #expect(link.invalidated)
+        #expect(center.removed == 2)
     }
 
     @Test func `E-LIFE-2 an unknown error code is logged not trapped`() {
@@ -451,12 +521,14 @@ import Testing
     }
 
     @Test func `E-API-2 negative control a sampled reference would see the mutation`() {
+        // The same loop run, but the encode reads the host's live state instead of the sampled value: it differs.
         let rig = LoopRig()
         let sampled = FrameDescription(clearColor: .black, quads: rig.source.quads)
         rig.submitter.duringSubmit = { rig.source.quads = [] }
+        rig.submitter.encodesFrom = rig.source
         rig.link.fire()
-        let reread = rig.source.frame(for: FrameContext(clock: FrameClock(), ambience: false))
-        #expect(reread != sampled)
+        #expect(rig.submitter.submitted.map(\.frame) != [sampled])
+        #expect(rig.submitter.submitted.map(\.frame) == [FrameDescription(clearColor: .black, quads: [])])
     }
 
     @Test func `E-API-2 the source is sampled once per frame`() {

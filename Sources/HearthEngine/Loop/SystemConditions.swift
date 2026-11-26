@@ -31,6 +31,10 @@ final class SystemConditions {
         onChange?(lowPower, thermal)
     }
 
+    isolated deinit {
+        invalidate()
+    }
+
     func invalidate() {
         for observer in observers {
             center.removeObserver(observer)
