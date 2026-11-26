@@ -88,15 +88,17 @@ import Testing
 
     @Test func `E-TIME-1 the half-time lint fails on half time in a shader`() throws {
         let hits = try Repo.lint(fixture: "half-time", [
-            "Sources/Engine/S.metal": ["ha" + "lf time = u.time;", "ha" + "lf u_time = 0;", "ha" + "lf4 timeScale = 1;"],
+            "Sources/Engine/S.metal": ["ha" + "lf time = u.time;", "ha" + "lf u_time = 0;", "ha" + "lf4 timeScale = 1;",
+                                       "float x = ha" + "lf(u.time) * 2;"],
         ])
         #expect(hits == ["Sources/Engine/S.metal:1: [half-time]", "Sources/Engine/S.metal:2: [half-time]",
-                         "Sources/Engine/S.metal:3: [half-time]"])
+                         "Sources/Engine/S.metal:3: [half-time]", "Sources/Engine/S.metal:4: [half-time]"])
     }
 
     @Test func `E-TIME-1 the half-time lint passes float time and the tree is clean`() throws {
         let hits = try Repo.lint(fixture: "half-time-edge", [
-            "Sources/Engine/S.metal": ["float time = u.time;", "half alpha = 1;", "// ha" + "lf time in a comment"],
+            "Sources/Engine/S.metal": ["float time = u.time;", "half alpha = 1;", "// ha" + "lf time in a comment",
+                                       "half4 c = half4(color);"],
             "Sources/Engine/A.swift": ["let note = \"ha" + "lf time\""],
         ])
         #expect(hits == [])
