@@ -204,6 +204,7 @@ public final class FrameLoop {
         layer: CAMetalLayer, device: MTLDevice?, configuration: FrameLoopConfiguration = FrameLoopConfiguration(),
         source: any FrameSource, events: @escaping @MainActor (EngineEvent) -> Void = { _ in }
     ) async throws(EngineError) {
+        // cov:allow - both paths run (the noDevice test and the public-loop test); the async init's line map misses it
         guard let device else {
             throw .noDevice
         }

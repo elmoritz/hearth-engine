@@ -60,10 +60,10 @@ final class MetalDisplayLinkDriver: NSObject, DisplayLinkDriver {
 }
 
 extension MetalDisplayLinkDriver: @MainActor CAMetalDisplayLinkDelegate {
-    // The link is added to the main run loop, so its updates arrive on the main thread.
+    // The link is added to the main run loop, so its updates arrive on the main thread. The presentation timestamp
+    // is when the frame is seen: the time animation is sampled at (E-TIME-2).
     // cov:allow - called by a running CAMetalDisplayLink only; a test cannot make an Update, it calls `deliver`
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
-        // The presentation timestamp is when the frame is seen: the time animation is sampled at (E-TIME-2).
         deliver(target: update.targetPresentationTimestamp, drawable: MetalDrawable(update.drawable))  // cov:allow - as above
     }  // cov:allow - as above
 }
