@@ -199,8 +199,10 @@ import Testing
         #expect(ticks.last?.timestamp == 51)
         driver.preferredRange = FramePolicy.ambience
         #expect(driver.preferredRange == FramePolicy.ambience)
+        #expect(!driver.invalidated)
         driver.invalidate()
         driver.invalidate()
+        #expect(driver.invalidated)
         #expect(makeDisplayLink(.displayLink, layer: layer) is MetalDisplayLinkDriver)
     }
 }

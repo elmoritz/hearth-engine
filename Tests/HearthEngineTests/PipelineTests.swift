@@ -478,6 +478,13 @@ import Testing
             let mixed = try #require(image[1, 2])
             #expect(abs(Int(mixed.r) - 128) <= 1 && mixed.g == 0 && abs(Int(mixed.b) - 127) <= 1 && mixed.a == 255)
             #expect(image[0, 0] == .blue && image[3, 3] == .blue)
+            // A quarter-alpha source keeps the destination's alpha at 1: `1 - source alpha`, not `source alpha`.
+            let quarter = FrameDescription(clearColor: .black, quads: [
+                Quad(x: 0, y: 0, width: 2, height: 2, color: .blue),
+                Quad(x: 0, y: 0, width: 2, height: 2, color: RGBA8(64, 0, 0, 64), blend: .premultipliedOver),
+            ])
+            let thin = try #require(try renderer.render(quarter, target: RenderTarget(width: 2, height: 2))[1, 1])
+            #expect(abs(Int(thin.r) - 64) <= 1 && thin.g == 0 && abs(Int(thin.b) - 191) <= 1 && thin.a == 255)
         }
     }
 

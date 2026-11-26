@@ -27,7 +27,7 @@ final class MetalDisplayLinkDriver: NSObject, DisplayLinkDriver {
     private let link: CAMetalDisplayLink
     /// Held for the link's lifetime: invalidating a link whose layer is gone crashes in QuartzCore.
     private let layer: CAMetalLayer
-    private var invalidated = false
+    private(set) var invalidated = false
     /// The previous update's target: the update carries no `timestamp`, so the interval is target to target.
     private var previousTarget: Double?
 
