@@ -147,6 +147,11 @@ import Testing
         #expect(loop.contentRate == .paused)
         #expect(layer.framebufferOnly && layer.contentsGravity == .topLeft)
         loop.invalidate()
+        // The default event handler takes a startup warning (the test runner's Info.plist has no key) and drops it.
+        let phone = try await FrameLoop(
+            layer: CAMetalLayer(), device: Self.device(),
+            configuration: FrameLoopConfiguration(highRateAllowed: true, idiom: .phone), source: source)
+        phone.invalidate()
     }
 
     @Test func `E-HAR-4 a loop without a device throws noDevice`() async {
