@@ -5,13 +5,13 @@ import Testing
 
 /// E-HAR-5: without a Metal device the GPU suite skips, and a skip is never a pass.
 @Suite struct DeviceGateTests {
-    @Test(.requiresGPU) func `E-HAR-5 with a device the GPU suite runs`() throws {
+    @Test(.requiresGPU) func `E-HAR-5 with a device the GPU suite runs`() async throws {
         let availability = HarnessGPU.probe()
         #expect(availability.isAvailable)
         #expect(HarnessGPU.isAvailable)
         let device = try #require(availability.device)
         #expect(!device.name.isEmpty)
-        #expect(try HarnessGPU.makeRenderer(availability).deviceName == device.name)
+        #expect(try await HarnessGPU.makeRenderer(availability).deviceName == device.name)
     }
 
     @Test func `E-HAR-5 the GPU trait skips on a nil device and on HEARTH_NO_GPU and runs with a device`() async throws {
@@ -32,7 +32,7 @@ import Testing
         #expect(try await ConditionTrait.requiresGPU(HarnessGPU.probe(environment: [:], provider: { device })).evaluate())
     }
 
-    @Test func `E-HAR-5 a nil device makes the GPU suite skip not fail`() {
+    @Test func `E-HAR-5 a nil device makes the GPU suite skip not fail`() async {
         let availability = HarnessGPU.probe(environment: [:], provider: { nil })
         #expect(!availability.isAvailable)
         #expect(availability.device == nil)
@@ -42,7 +42,7 @@ import Testing
         }
         #expect(reason == "no Metal device")
         // What a GPU test would do without the trait: a typed error, not a crash.
-        #expect(throws: EngineError.noDevice) { try HarnessGPU.makeRenderer(availability) }
+        await #expect(throws: EngineError.noDevice) { try await HarnessGPU.makeRenderer(availability) }
     }
 
     @Test func `E-HAR-5 HEARTH_NO_GPU simulates a runner without a device`() {

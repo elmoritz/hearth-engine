@@ -41,9 +41,22 @@ The engine imports nothing of the harness. Inside `HearthEngine`:
 - **`FramePlan`** (internal): a frame validated against a target and turned into vertices and draws. Pure; every
   refusal (target size, format, a quad that is not finite, a missing texture) is decided here, before a Metal call
   exists.
-- **`GPU/GPUBackend`** (internal protocol, invariant 4) and **`GPU/MetalBackend`**, its only conformer: a private
-  render target, one draw per quad, a blit to a shared buffer. Every allocation goes through `requireGPU`, so a
-  refusal is an `EngineError.gpuFailure`.
+- **`GPU/GPUBackend`** (internal protocol, invariant 4) and **`GPU/MetalBackend`**, its only conformer. `warm`
+  probes the device (programmable blending by building the single pass's own final stage, the texture limit by
+  allocation; never a family name) and builds every pipeline of `PipelineKey.precompiled` concurrently, off the
+  caller's thread, before the renderer exists (E-PSO-3). The set is then frozen: a key outside it is a
+  `gpuFailure`, never a build (E-PSO-1). One `encode` serves the offscreen target (then a blit readback) and a
+  drawable, so the goldens prove the on-screen encode. `GPUCounters` (passes, draws, binds per frame; pipelines
+  ever built, and on the main thread) back the audits and the PERF probes. Every allocation goes through
+  `requireGPU`, so a refusal is an `EngineError.gpuFailure`.
+- **`GPU/PassLayout`**: `GPUFeatures`, `GPURestrictions` (what a renderer may use; `.floor` is every optional
+  feature off and the Simulator's 8192 limit), `GPUCapabilities` and the two pass layouts as data. Single pass: the
+  target (don't-care, store) is attachment 0, the scene a memoryless `rgba16Float` attachment 1 (clear,
+  don't-care) that the final stage reads through `[[color(1)]]`. Two passes (D18): the scene is a stored private
+  texture the final stage samples. The final stage is a copy until grade, encode and dither arrive (#3, #11).
+- **`GPU/PipelineKey`**: stage (solid, textured, final), blend, layout and target format; each key's attachments
+  (in the single pass, scene stages never write attachment 0 and the final stage never writes attachment 1) and
+  shader functions.
 - **`Shaders/Quad.metal`**: compiled by the build into the target's bundle. Nothing compiles shader source at run
   time. The Metal Toolchain it needs is checked by `scripts/metal-toolchain` before every build (B-TOOL-1).
 
@@ -65,17 +78,20 @@ Inside `HearthHarness`:
 
 `HearthEngine`:
 
-- `OffscreenRenderer`: the entry point. `init(device:)`, `setTexture(_:image:)`, `render(_:target:options:)`.
-  Headless: no view, no display link, no clock.
+- `OffscreenRenderer`: the headless entry point. `init(device:restrictions:) async` (the warm-up),
+  `setTexture(_:image:)`, `render(_:target:options:)`, `capabilities`, `counters`. No view, no display link, no
+  clock.
+- `GPURestrictions`, `GPUFeatures`, `GPUCapabilities`, `GPUCounters`.
 - `FrameDescription`: clear colour and an ordered list of `Quad`. `Quad`: a `PixelRect` in target pixels (origin
-  top-left, y down) filled with an `RGBA8` or a whole texture named by `TextureID`. Values are written verbatim and
-  unblended; colour space, premultiplication and blending arrive with the colour pipeline (D1 is open).
+  top-left, y down) filled with an `RGBA8` or a whole texture named by `TextureID`, with a `Blend`: `.opaque`
+  (blending off, the default) or `.premultipliedOver`. Opaque quads come first (E-PASS-3). Values are otherwise
+  written verbatim; colour space and premultiplication of textures arrive with the colour pipeline (D1 is open).
 - `RenderTarget` (size and `PixelFormat`), `RenderOptions` (`missingTexture`: throw, the default, or draw the
   fallback colour).
 - `PixelImage`: RGBA8, row-major, top row first; sides in `1...16384`.
 - `EngineTime`: absolute seconds as `Double`; `phase(period:)` wraps on the CPU.
 - `EngineError`: `noDevice`, `missingTexture`, `malformedAssetHeader`, `unsupportedFormat`, `invalidTargetSize`,
-  `invalidQuad`, `gpuFailure`. Every throwing function is `throws(EngineError)`.
+  `invalidQuad`, `opaqueAfterBlended`, `textureTooLarge`, `gpuFailure`. Every throwing function is `throws(EngineError)`.
 
 `HearthHarness`:
 
@@ -88,8 +104,10 @@ Inside `HearthHarness`:
 
 ## Extension points
 
-- **A second GPU back end** (Metal 4, D4; the Simulator's two-pass path, D18): a second conformer of `GPUBackend`.
-  `FramePlan` is its input and stays API-free.
+- **A second GPU back end** (Metal 4, D4): a second conformer of `GPUBackend`. `FramePlan` is its input and stays
+  API-free. The Simulator's two-pass path (D18) is not a back end but a `PassLayout` of the Metal one, selected by
+  the probe; #29 proves it equivalent (E-PASS-4).
+- **A pipeline**: a `PipelineKey.Stage` and its functions; `precompiled` grows with it, so the warm-up builds it.
 - **Texture loading**: `OffscreenRenderer.setTexture(_:image:)` uploads an image directly. The container loader
   replaces the upload and keeps `TextureID`, and throws `malformedAssetHeader` and `unsupportedFormat` for the
   container's own header.

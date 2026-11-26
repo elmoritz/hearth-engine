@@ -10,8 +10,8 @@ import Testing
 
     // MARK: E-HAR-1
 
-    @Test(.requiresGPU) func `E-HAR-1 a 1x1 red quad reads back exactly where placed`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-1 a 1x1 red quad reads back exactly where placed`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let frame = FrameDescription(clearColor: clear, quads: [Quad(x: 5, y: 9, width: 1, height: 1, color: .red)])
         let image = try renderer.render(frame, target: RenderTarget(width: 16, height: 16))
         #expect(image.width == 16 && image.height == 16)
@@ -27,8 +27,8 @@ import Testing
         #expect(try matchesExactly(image, expected))
     }
 
-    @Test(.requiresGPU) func `E-HAR-1 negative control a quad one pixel off fails the exact comparison`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-1 negative control a quad one pixel off fails the exact comparison`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let expected = try expectedImage(width: 16, height: 16, clear: clear) { x, y in x == 5 && y == 9 ? .red : nil }
         for (x, y) in [(6, 9), (4, 9), (5, 8), (5, 10)] {
             let frame = FrameDescription(clearColor: clear, quads: [Quad(x: Float(x), y: Float(y), width: 1, height: 1, color: .red)])
@@ -41,8 +41,8 @@ import Testing
     }
 
     @Test(.requiresGPU, arguments: [(1, 1), (3, 5), (257, 129), (16384, 1), (1, 4099)])
-    func `E-HAR-1 a quad reads back where placed at every size`(width: Int, height: Int) throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    func `E-HAR-1 a quad reads back where placed at every size`(width: Int, height: Int) async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let color = RGBA8(1, 127, 254, 255)
         let frame = FrameDescription(
             clearColor: clear, quads: [Quad(x: Float(width - 1), y: Float(height - 1), width: 1, height: 1, color: color)])
@@ -53,8 +53,8 @@ import Testing
         #expect(image == expected)
     }
 
-    @Test(.requiresGPU) func `E-HAR-1 quads clip at the target edge and follow the pixel-centre rule`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-1 quads clip at the target edge and follow the pixel-centre rule`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let frame = FrameDescription(clearColor: clear, quads: [
             Quad(x: -2, y: -2, width: 4, height: 3, color: .red),          // partly outside: covers (0...1, 0)
             Quad(x: 6, y: 6, width: 100, height: 100, color: .green),      // runs past the far corner
@@ -79,8 +79,8 @@ import Testing
         #expect(image == expected)
     }
 
-    @Test(.requiresGPU) func `E-HAR-1 an empty frame is the clear colour and later quads overwrite earlier ones`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-1 an empty frame is the clear colour and later quads overwrite earlier ones`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let target = RenderTarget(width: 5, height: 3)
         #expect(try renderer.render(FrameDescription(clearColor: clear), target: target) == PixelImage(width: 5, height: 3, filledWith: clear))
         #expect(try renderer.render(FrameDescription(), target: target) == PixelImage(width: 5, height: 3, filledWith: .clear))
@@ -97,8 +97,8 @@ import Testing
         #expect(try renderer.render(frame, target: target) == expected)
     }
 
-    @Test(.requiresGPU) func `E-HAR-1 a bgra target reads back in rgba order`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-1 a bgra target reads back in rgba order`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let color = RGBA8(200, 100, 50, 25)
         let frame = FrameDescription(clearColor: clear, quads: [Quad(x: 1, y: 0, width: 1, height: 2, color: color)])
         let rgba = try renderer.render(frame, target: RenderTarget(width: 3, height: 2, format: .rgba8Unorm))
@@ -110,8 +110,8 @@ import Testing
         #expect(try renderer.render(frame, target: RenderTarget(width: 3, height: 2, format: .bgra8Unorm)) == rgba)
     }
 
-    @Test(.requiresGPU) func `E-HAR-1 a textured quad reads back its texels where placed`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-1 a textured quad reads back its texels where placed`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         var random = SplitMix64(seed: 0x4845_0002)
         var texels = try PixelImage(width: 5, height: 3, filledWith: .black)
         for y in 0..<3 {
@@ -140,13 +140,13 @@ import Testing
 
     // MARK: E-HAR-4
 
-    @Test func `E-HAR-4 a nil device throws noDevice`() {
-        #expect(throws: EngineError.noDevice) { try OffscreenRenderer(device: nil) }
-        #expect(throws: EngineError.noDevice) { try HarnessGPU.makeRenderer(.unavailable(reason: "none")) }
+    @Test func `E-HAR-4 a nil device throws noDevice`() async {
+        await #expect(throws: EngineError.noDevice) { try await OffscreenRenderer(device: nil) }
+        await #expect(throws: EngineError.noDevice) { try await HarnessGPU.makeRenderer(.unavailable(reason: "none")) }
     }
 
-    @Test(.requiresGPU) func `E-HAR-4 a well-formed frame throws nothing`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-4 a well-formed frame throws nothing`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         #expect(!renderer.deviceName.isEmpty)
         #expect(renderer.deviceName == HarnessGPU.probe().device?.name)
         try renderer.setTexture("white", image: PixelImage(width: 2, height: 2, filledWith: .white))
@@ -157,8 +157,8 @@ import Testing
         #expect(image[0, 0] == .white && image[3, 1] == .red)
     }
 
-    @Test(.requiresGPU) func `E-HAR-4 a missing texture throws on the device path and the renderer stays usable`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-4 a missing texture throws on the device path and the renderer stays usable`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let frame = FrameDescription(clearColor: clear, quads: [Quad(x: 1, y: 1, width: 2, height: 2, texture: "absent")])
         let target = RenderTarget(width: 4, height: 4)
         #expect(throws: EngineError.missingTexture("absent")) { try renderer.render(frame, target: target) }
@@ -168,8 +168,8 @@ import Testing
         #expect(try renderer.render(FrameDescription(clearColor: clear), target: target) == PixelImage(width: 4, height: 4, filledWith: clear))
     }
 
-    @Test(.requiresGPU) func `E-HAR-4 a fallback is drawn only when the caller asks`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-4 a fallback is drawn only when the caller asks`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let frame = FrameDescription(clearColor: clear, quads: [Quad(x: 1, y: 1, width: 2, height: 2, texture: "sprite")])
         let target = RenderTarget(width: 4, height: 4)
         let asked = RenderOptions(missingTexture: .fallback)
@@ -196,13 +196,13 @@ import Testing
 
     // MARK: E-VAL-1
 
-    @Test(.requiresGPU) func `E-VAL-1 every harness scene renders through every pipeline under the validation layers`() throws {
+    @Test(.requiresGPU) func `E-VAL-1 every harness scene renders through every pipeline under the validation layers`() async throws {
         let device = try #require(HarnessGPU.probe().device)
         if ProcessInfo.processInfo.environment["MTL_DEBUG_LAYER"] == "1" {
             // The gate's validation step: the device must be the validating one, or the run proved nothing.
             #expect(String(describing: type(of: device)).contains("Debug"))
         }
-        let renderer = try OffscreenRenderer(device: device)
+        let renderer = try await OffscreenRenderer(device: device)
         let scenes = try HarnessScene.catalogue()
         #expect(scenes.map(\.name) == ["postcard", "bars"])
         for scene in scenes {
@@ -219,8 +219,8 @@ import Testing
         }
     }
 
-    @Test(.requiresGPU) func `E-VAL-1 invalid input is rejected before it reaches Metal`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-VAL-1 invalid input is rejected before it reaches Metal`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let quad = Quad(x: 0, y: 0, width: 1, height: 1, color: .red)
         #expect(throws: EngineError.invalidTargetSize(width: 0, height: 4)) {
             try renderer.render(FrameDescription(quads: [quad]), target: RenderTarget(width: 0, height: 4))
@@ -243,8 +243,8 @@ import Testing
     }
 
     @Test(.requiresGPU, arguments: [(1, 1), (3, 5), (16384, 1), (1, 16384)])
-    func `E-VAL-1 the smallest the odd and the widest target render under validation`(width: Int, height: Int) throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    func `E-VAL-1 the smallest the odd and the widest target render under validation`(width: Int, height: Int) async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         try renderer.setTexture("texel", image: PixelImage(width: 1, height: 1, filledWith: .blue))
         let frame = FrameDescription(clearColor: clear, quads: [
             Quad(x: 0, y: 0, width: Float(width), height: Float(height), texture: "texel"),

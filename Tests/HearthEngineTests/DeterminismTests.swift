@@ -8,8 +8,8 @@ import Testing
 
     // MARK: E-HAR-2
 
-    @Test(.requiresGPU) func `E-HAR-2 two renders at one time are byte-identical`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-2 two renders at one time are byte-identical`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         for scene in try HarnessScene.catalogue() {
             try scene.load(into: renderer)
             for seconds in Self.times {
@@ -22,8 +22,8 @@ import Testing
         }
     }
 
-    @Test(.requiresGPU) func `E-HAR-2 negative control renders at two times differ`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-2 negative control renders at two times differ`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         for scene in try HarnessScene.catalogue() {
             try scene.load(into: renderer)
             for seconds in Self.times {
@@ -93,8 +93,8 @@ import Testing
 
     // MARK: E-HAR-3
 
-    @Test(.requiresGPU) func `E-HAR-3 100 renders of the postcard scene hash identically`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-3 100 renders of the postcard scene hash identically`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let scene = try HarnessScene.postcard()
         try scene.load(into: renderer)
         let time = EngineTime(seconds: 2.75)
@@ -111,8 +111,8 @@ import Testing
         #expect(image[255, 64] == RGBA8(255, 255, 255, 255) && image[0, 64] == RGBA8(255, 255, 255, 0))
     }
 
-    @Test(.requiresGPU) func `E-HAR-3 negative control a one-pixel change changes the hash`() throws {
-        let renderer = try HarnessGPU.makeRenderer()
+    @Test(.requiresGPU) func `E-HAR-3 negative control a one-pixel change changes the hash`() async throws {
+        let renderer = try await HarnessGPU.makeRenderer()
         let scene = try HarnessScene.postcard()
         try scene.load(into: renderer)
         let time = EngineTime(seconds: 2.75)
@@ -127,10 +127,10 @@ import Testing
         #expect(try scene.render(at: EngineTime(seconds: 3.75), with: renderer).sha256 != reference.sha256)
     }
 
-    @Test(.requiresGPU) func `E-HAR-3 a fresh renderer and a reused one hash the same`() throws {
+    @Test(.requiresGPU) func `E-HAR-3 a fresh renderer and a reused one hash the same`() async throws {
         let scene = try HarnessScene.postcard()
         let time = EngineTime(seconds: 2.75)
-        let reused = try HarnessGPU.makeRenderer()
+        let reused = try await HarnessGPU.makeRenderer()
         try scene.load(into: reused)
         let reference = try scene.render(at: time, with: reused).sha256
         // Other frames, sizes and formats in between leave nothing behind.
@@ -139,7 +139,7 @@ import Testing
         try scene.load(into: reused)
         #expect(try scene.render(at: time, with: reused).sha256 == reference)
 
-        let fresh = try HarnessGPU.makeRenderer()
+        let fresh = try await HarnessGPU.makeRenderer()
         try scene.load(into: fresh)
         #expect(try scene.render(at: time, with: fresh).sha256 == reference)
     }

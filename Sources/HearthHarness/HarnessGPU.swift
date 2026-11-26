@@ -40,8 +40,10 @@ public enum HarnessGPU {
     /// Whether this process has a device.
     public static var isAvailable: Bool { current.isAvailable }
 
-    /// A renderer on the probed device. Throws `EngineError.noDevice` when there is none.
-    public static func makeRenderer(_ availability: Availability = current) throws(EngineError) -> OffscreenRenderer {
-        try OffscreenRenderer(device: availability.device)
+    /// A renderer on the probed device, its pipelines warmed. Throws `EngineError.noDevice` when there is none.
+    public static func makeRenderer(
+        _ availability: Availability = current, restrictions: GPURestrictions = .none
+    ) async throws(EngineError) -> OffscreenRenderer {
+        try await OffscreenRenderer(device: availability.device, restrictions: restrictions)
     }
 }
