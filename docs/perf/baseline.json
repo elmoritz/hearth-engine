@@ -19,12 +19,22 @@
   "loop.jump-frame-ratio": {
    "kind": "time",
    "unit": "ratio",
-   "value": 0.9871600884117461
+   "value": 1.0394514800680328
   },
   "pso.after-warmup": {
    "kind": "count",
    "unit": "pipelines",
    "value": 0.0
+  },
+  "pso.warm.onscreen.singlePass": {
+   "kind": "count",
+   "unit": "pipelines",
+   "value": 5.0
+  },
+  "pso.warm.onscreen.twoPass": {
+   "kind": "count",
+   "unit": "pipelines",
+   "value": 5.0
   },
   "pso.warm.singlePass": {
    "kind": "count",
