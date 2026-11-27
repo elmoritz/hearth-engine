@@ -209,6 +209,8 @@ import Testing
             (Array(#"["\ud800"#.utf8), "byte 8"),
             (Array(#"["\ud800\u0041"]"#.utf8), "byte 14"),
             (Array(#"["\ud800\n"]"#.utf8), "byte 8"),
+            // The boundary of the low-surrogate look-ahead: a backslash as the file's last byte.
+            (Array(#"["\ud800\"#.utf8), "byte 8"),
             (Array(#"["\udc00"]"#.utf8), "byte 8"),
             (Array(#"["\udfff"]"#.utf8), "byte 8"),
             (Array(#"["\u12"]"#.utf8), "byte 6"),
@@ -354,6 +356,13 @@ import Testing
         #expect(Self.path(of: Self.encodeFailure(scene)) == "layers[1].name")
         scene.layers = [SceneTileLayer(name: "a"), SceneTileLayer(name: "b"), SceneTileLayer(name: "a")]
         #expect(Self.encodeFailure(scene) == .invalidSceneFile(path: "layers[2].name", reason: "duplicate name \"a\""))
+        // Names compare as Strings: canonically equivalent spellings are one name, though their bytes differ.
+        scene.layers = [SceneTileLayer(name: "\u{E9}"), SceneTileLayer(name: "e\u{301}")]
+        #expect(Self.path(of: Self.encodeFailure(scene)) == "layers[1].name")
+        let composed = SceneFile(layers: [SceneTileLayer(name: "\u{E9}")])
+        let decomposed = SceneFile(layers: [SceneTileLayer(name: "e\u{301}")])
+        #expect(composed == decomposed)
+        #expect((try? Self.encode(composed)) != (try? Self.encode(decomposed)))
         scene = Self.baseScene
         scene.views.append(SceneView(name: "", target: RenderTarget(width: 1, height: 1), frame: FrameDescription()))
         #expect(Self.encodeFailure(scene) == .invalidSceneFile(path: "views[1].name", reason: "empty"))

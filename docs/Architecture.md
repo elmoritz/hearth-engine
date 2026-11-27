@@ -55,7 +55,9 @@ The engine imports nothing of the harness. Inside `HearthEngine`:
   Decoding reads `format`, then `version` (outside `supportedVersions` is `unsupportedSceneVersion`, whatever the
   body), then the body of that version; unknown, missing and duplicate keys are refused. Encode and decode check the
   same rules (names non-empty and unique, target sides in range, rectangles finite), so whatever encodes decodes.
-  Textures are named, never embedded.
+  Textures are named, never embedded. Names compare as `String`s (canonical equivalence) while the bytes follow
+  the scalars, so `==` scenes may encode differently; one value always encodes the same. `RenderOptions` are not
+  in the file: they are the replaying caller's choice.
 - **`FramePlan`** (internal): a frame validated against a target and turned into vertices and draws. Pure; every
   refusal (target size, format, a quad that is not finite, a missing texture) is decided here, before a Metal call
   exists.

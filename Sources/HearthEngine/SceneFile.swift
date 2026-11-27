@@ -38,6 +38,10 @@ public struct SceneTileLayer: Sendable, Hashable {
 /// views and among the layers, target sides in `1...PixelImage.maximumDimension`, every quad's rectangle finite
 /// (JSON has no NaN or infinity). Anything else a frame holds is written as it is, so a replay meets the renderer's
 /// own refusal.
+///
+/// Names and texture names are `String`s, so equality, and the uniqueness of names, is Unicode canonical
+/// equivalence: `"\u{E9}"` and `"e\u{301}"` are one name. The bytes follow the scalars, so two scenes that are `==`
+/// can still encode differently; one value always encodes to the same bytes (E-SER-3).
 public struct SceneFile: Sendable, Hashable {
     /// The `format` member of every scene file.
     public static let format = "hearth-scene"
