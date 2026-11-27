@@ -260,6 +260,10 @@ import Testing
             .string("\"\\/\u{08}\u{0C}\n\r\t" + "A\u{E9}\u{E9}\u{1F600}\u{0}"), .number("-0"), .number("1E5"), .number("1e-5"),
             .number("1.5e+3"), .number("0.25"), .bool(true), .bool(false), .null, .object([:]), .array([]),
         ]))
+        // A literal that ends exactly at the end of the file.
+        #expect(try SceneJSON.parse(Array("true".utf8)) == .bool(true))
+        #expect(try SceneJSON.parse(Array("false".utf8)) == .bool(false))
+        #expect(try SceneJSON.parse(Array("null".utf8)) == .null)
         #expect(try SceneJSON.parse(Array(#"{"b": 1, "a": {"c": [2]}}"#.utf8)) == .object(["a": .object(["c": .array([.number("2")])]), "b": .number("1")]))
     }
 
@@ -588,5 +592,7 @@ import Testing
         let escapes = SceneJSON.string("\"\\\n\r\t\u{08}\u{0C}\u{01}\u{1F}\u{7F}\u{E9}/\u{1F600}")
         #expect(String(decoding: escapes.written(), as: UTF8.self) == "\"\\\"\\\\\\n\\r\\t\\b\\f\\u0001\\u001f\u{7F}\u{E9}/\u{1F600}\"\n")
         #expect(Array(SceneJSON.string("\u{0}").written()) == Array("\"\\u0000\"\n".utf8))
+        // The space is the first character written raw; everything below it is escaped.
+        #expect(String(decoding: SceneJSON.string(" a b ").written(), as: UTF8.self) == "\" a b \"\n")
     }
 }
