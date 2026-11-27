@@ -238,7 +238,7 @@ indirect enum SceneJSON: Sendable, Equatable {
                 offset += 1
                 skipWhitespace()
             }
-        }
+        } // cov:allow - the end of a function whose loop only returns or throws
 
         private mutating func literal(_ word: String) throws(EngineError) {
             let spelled = Array(word.utf8)
