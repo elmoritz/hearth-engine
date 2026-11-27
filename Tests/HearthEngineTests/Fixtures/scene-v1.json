@@ -1,0 +1,39 @@
+{
+  "format": "hearth-scene",
+  "layers": [
+    {"name": "ground"},
+    {"name": "overlay"}
+  ],
+  "version": 1,
+  "views": [
+    {
+      "frame": {
+        "clearColor": [24, 32, 56, 255],
+        "quads": [
+          {
+            "blend": "opaque",
+            "fill": {
+              "color": [255, 0, 0, 255]
+            },
+            "rect": {"height": 4, "width": 4, "x": 0, "y": 0}
+          },
+          {
+            "blend": "premultipliedOver",
+            "fill": {"texture": "flat/red-half"},
+            "rect": {"height": 2, "width": 4, "x": 2.5, "y": 0.25}
+          }
+        ]
+      },
+      "name": "main",
+      "target": {"format": "rgba8Unorm", "height": 4, "width": 8}
+    },
+    {
+      "frame": {
+        "clearColor": [0, 0, 0, 0],
+        "quads": []
+      },
+      "name": "minimap",
+      "target": {"format": "bgra8Unorm", "height": 2, "width": 2}
+    }
+  ]
+}

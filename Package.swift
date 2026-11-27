@@ -15,6 +15,9 @@ let package = Package(
     targets: [
         .target(name: "HearthEngine", resources: [.process("Shaders")], swiftSettings: strict),
         .target(name: "HearthHarness", dependencies: ["HearthEngine"], swiftSettings: strict),
-        .testTarget(name: "HearthEngineTests", dependencies: ["HearthEngine", "HearthHarness"], swiftSettings: strict),
+        .testTarget(
+            name: "HearthEngineTests", dependencies: ["HearthEngine", "HearthHarness"],
+            // E-SER-2: a scene file of every version this build reads.
+            resources: [.copy("Fixtures")], swiftSettings: strict),
     ]
 )

@@ -6,7 +6,8 @@ reads the whole milestone against it. It describes what exists. Plans live in ti
 
 As of HE-9 the engine draws flat and textured quads, opaque or premultiplied-over, headless (the harness's
 foundation since HE-1) and on screen through a frame loop: display link, frame-rate policy, lifecycle gate and
-pipelines warmed at init, one render pass per frame or the two-pass fallback.
+pipelines warmed at init, one render pass per frame or the two-pass fallback. Since HE-21 a frame description is
+written to and read from a versioned scene file (D18).
 
 ## Invariants
 
@@ -38,12 +39,23 @@ One package (`Package.swift`: Swift 6 language mode and warnings as errors on ev
 |---|---|---|---|
 | `HearthEngine` | `Sources/HearthEngine` | The engine: values, errors, the frame plan, the GPU boundary, shaders, the frame loop | Metal, QuartzCore, Foundation, os |
 | `HearthHarness` | `Sources/HearthHarness` | What tests, and later the viewer, the benchmark app and the D22 harness tool, are built on: device probe, receipts, golden comparison, synthetic corpus, scene catalogue | `HearthEngine`, Metal, Foundation, CryptoKit |
-| `HearthEngineTests` | `Tests/HearthEngineTests` | The E and B suites that run on the Mac | both |
+| `HearthEngineTests` | `Tests/HearthEngineTests` | The E and B suites that run on the Mac; `Fixtures/` holds a scene file of every version the engine reads (E-SER-2) | both |
 
 The engine imports nothing of the harness. Inside `HearthEngine`:
 
 - **Values** (`EngineTime.swift`, `PixelImage.swift`, `FrameDescription.swift`, `EngineError.swift`): plain `Sendable`
   values with no GPU object and no closure.
+- **`SceneFile`** (`SceneFile.swift`, `SceneJSON.swift`): the scene file of D18. A scene is a list of tile layers
+  and a list of views (D24); a view is a name, a `RenderTarget` and a `FrameDescription`. Version 1 names its layers
+  and holds nothing else of them; their content is D16's (#25) and comes as a later version. The bytes are UTF-8
+  JSON with one spelling (E-SER-3): keys sorted by UTF-8 bytes, two-space indent, a container that is empty or holds
+  only scalars on one line, `Float` as Swift's shortest round-trip decimal without a trailing `.0`. `SceneJSON` is
+  the engine's own writer and parser, not `JSONEncoder`: a number keeps its text and becomes a `Float` once,
+  correctly rounded, so floats round-trip bit for bit (E-SER-1); the parser bounds nesting at 32 and never traps.
+  Decoding reads `format`, then `version` (outside `supportedVersions` is `unsupportedSceneVersion`, whatever the
+  body), then the body of that version; unknown, missing and duplicate keys are refused. Encode and decode check the
+  same rules (names non-empty and unique, target sides in range, rectangles finite), so whatever encodes decodes.
+  Textures are named, never embedded.
 - **`FramePlan`** (internal): a frame validated against a target and turned into vertices and draws. Pure; every
   refusal (target size, format, a quad that is not finite, a missing texture) is decided here, before a Metal call
   exists.
@@ -119,11 +131,14 @@ Inside `HearthHarness`:
   `FrameRateRange`, `ContentMotion`, `ThermalLevel`, `Lifecycle`, `DisplayLinkKind`, `DeviceIdiom`.
   `EngineEvent` (`warning`, `commandBufferFailed`, `frameRefused`), `EngineWarning`, `CommandBufferFailure`,
   `FrameLoopStats`.
+- `SceneFile` (`layers`, `views`, `init(data:)`, `encoded()`, `view(named:)`, `format`, `version`,
+  `supportedVersions`), `SceneView`, `SceneTileLayer`.
 - `PixelImage`: RGBA8, row-major, top row first; sides in `1...16384`; a device may allow less (`textureTooLarge`).
 - `EngineTime`: absolute seconds as `Double`; `phase(period:)` wraps on the CPU, `gpuSeconds(period:)` is the
   wrapped `Float` a shader sees, `frameIndex(framesPerSecond:count:)` and `progress(since:duration:)`.
 - `EngineError`: `noDevice`, `missingTexture`, `malformedAssetHeader`, `unsupportedFormat`, `invalidTargetSize`,
-  `invalidQuad`, `opaqueAfterBlended`, `textureTooLarge`, `gpuFailure`. Every throwing function is `throws(EngineError)`.
+  `invalidQuad`, `opaqueAfterBlended`, `textureTooLarge`, `gpuFailure`, `invalidSceneFile(path:reason:)`,
+  `unsupportedSceneVersion`. Every throwing function is `throws(EngineError)`.
 
 `HearthHarness`:
 
@@ -148,4 +163,8 @@ Inside `HearthHarness`:
   and particles (#10) reset cosmetic state on `FrameClock.discontinuity`.
 - **Frame-rate policy**: `FramePolicy.rate(for:)` is the whole table; a new input is a `FrameConditions` field.
 - **Scenes**: a new subsystem adds a `HarnessScene` to `catalogue()` and its parts to `postcard`.
-- **Serialisation**: `FrameDescription` is a plain value so it can become the scene file of D18 unchanged.
+- **Serialisation**: a field of `FrameDescription` or `Quad` is a field of the scene file. Adding one, or the tile
+  layers' content, is a new version: `SceneFile.version` and `supportedVersions` grow, `SceneFileCodec` decodes each
+  supported version, and a `Fixtures/scene-v<N>.json` is added and never edited, so every earlier file keeps
+  decoding (E-SER-2). The harness tool, the viewer and hot reload (D19, D20, D22) open scenes with
+  `SceneFile(data:)`.
