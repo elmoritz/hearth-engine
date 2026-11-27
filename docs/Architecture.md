@@ -104,7 +104,9 @@ Inside `HearthHarness`:
 - **`Receipt`**: outcomes by catalogue id; complete only with a GPU, at least one id and nothing skipped or failed.
   It holds the rule of E-PROOF-2; the file on disk comes with the harness tool.
 - **`Golden/`**: `NearExact` (the catalogue's 2/255 on 99.9% and 8/255 on all, and `exact`), `FLIP` (LDR-FLIP from
-  the paper: mean and 99th percentile), `GoldenCheck` (one comparison; a failure writes actual, expected and the
+  the paper: mean and 99th percentile; it equals NVlabs' `flip-evaluator` 1.7 on four corpus pairs at 67, 67.2 and
+  95 pixels per degree, numbers from `scripts/flip-reference.py`, which runs the reference by hand outside the
+  package and never in the gate, E-GOLD-6), `GoldenCheck` (one comparison; a failure writes actual, expected and the
   difference map as PNG, a pass writes nothing). `PNGEncoder` writes stored-deflate PNG with no image framework.
 - **`Corpus/SyntheticCorpus`**: the synthetic tier of D21, generated with integer arithmetic; no binary asset.
 - **`HarnessScene`**: a named scene, its textures and its frame as a function of `EngineTime`. `catalogue()` is the
