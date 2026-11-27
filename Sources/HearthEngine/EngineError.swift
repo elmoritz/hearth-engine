@@ -18,6 +18,11 @@ public enum EngineError: Error, Sendable, Equatable, CustomStringConvertible {
     case textureTooLarge(width: Int, height: Int, limit: Int)
     /// Metal refused an allocation or a command buffer. The text names what was asked for.
     case gpuFailure(String)
+    /// A scene file that cannot be read, or a scene that cannot be written: `path` names the value
+    /// (`views[0].frame.quads[3].rect.x`), or the byte where the text stops being JSON (`byte 17`).
+    case invalidSceneFile(path: String, reason: String)
+    /// A scene file of a version this build does not read (`SceneFile.supportedVersions`).
+    case unsupportedSceneVersion(Int)
 
     public var description: String {
         switch self {
@@ -39,6 +44,10 @@ public enum EngineError: Error, Sendable, Equatable, CustomStringConvertible {
             "texture \(width)x\(height) exceeds this device's limit of \(limit)"
         case .gpuFailure(let what):
             "GPU failure: \(what)"
+        case .invalidSceneFile(let path, let reason):
+            "invalid scene file at \(path): \(reason)"
+        case .unsupportedSceneVersion(let version):
+            "unsupported scene file version \(version)"
         }
     }
 }
