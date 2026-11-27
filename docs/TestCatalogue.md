@@ -97,6 +97,7 @@ The comparison itself is code, so it has tests: a comparison that cannot fail pr
 | E-GOLD-1 | The near-exact tier applies the method's rule | P | Per-channel differences of at most 2/255 on at least 99.9% of pixels and at most 8/255 on all pass; one pixel at 9/255, or more than 0.1% of pixels over 2/255, fails; the exact tolerance passes only equal images; images of different sizes are a typed error |
 | E-GOLD-2 | The FLIP tier scores as the paper defines and gates on the mean and on the 99th percentile | P | Identical images score 0 everywhere; pure green against pure blue scores 1; a comparison fails when the mean is over its limit and fails when the 99th percentile is over its cap, each on its own; a viewing condition that is not a number or lies outside 1 to 1024 pixels per degree is a typed error, never a pass |
 | E-GOLD-3 | A failed comparison leaves its evidence | P | A failure writes the actual image, the expected image and the difference map (the FLIP map on the FLIP tier) as PNG files that decode to those pixels; a pass writes nothing |
+| E-GOLD-6 | FLIP matches the reference implementation | P | On 4 `SyntheticCorpus` pairs the mean and the 99th percentile equal the stored numbers of the NVlabs reference within 1e-3; the reference version is named in the test |
 
 ### E-CORPUS: synthetic corpus (D21)
 
